@@ -1,0 +1,9 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends python3.11 python3-pip git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml .
+COPY app ./app
+RUN pip install --no-cache-dir ".[cuda]" \
+    && pip install --no-cache-dir "git+https://github.com/facebookresearch/sam2.git"
+CMD ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]

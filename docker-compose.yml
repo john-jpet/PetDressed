@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: petdressed
+      POSTGRES_USER: petdressed
+      POSTGRES_PASSWORD: petdressed
+    ports: ["${POSTGRES_PORT:-55432}:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U petdressed"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["${REDIS_PORT:-56379}:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: petdressed
+      MINIO_ROOT_PASSWORD: petdressed-local-only
+      MINIO_API_CORS_ALLOW_ORIGIN: "${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}"
+    ports: ["${MINIO_PORT:-59000}:9000", "${MINIO_CONSOLE_PORT:-59001}:9001"]
+    volumes: [minio_data:/data]
+
+  api:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgresql+psycopg://petdressed:petdressed@postgres:5432/petdressed"
+      REDIS_URL: "redis://redis:6379/0"
+      S3_ENDPOINT_URL: "http://minio:9000"
+      S3_PUBLIC_ENDPOINT_URL: "${S3_PUBLIC_ENDPOINT_URL:-http://localhost:59000}"
+    ports: ["${API_PORT:-58000}:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 4s
+      retries: 10
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    command: >
+      sh -c "python scripts/prefetch_models.py &&
+      celery -A app.tasks.celery_app worker --loglevel=INFO --concurrency=1"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgresql+psycopg://petdressed:petdressed@postgres:5432/petdressed"
+      REDIS_URL: "redis://redis:6379/0"
+      S3_ENDPOINT_URL: "http://minio:9000"
+      S3_PUBLIC_ENDPOINT_URL: "${S3_PUBLIC_ENDPOINT_URL:-http://localhost:59000}"
+      HF_HOME: "/models/huggingface"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+    volumes:
+      - model_cache:/models/huggingface
+
+volumes:
+  postgres_data:
+  minio_data:
+  model_cache:

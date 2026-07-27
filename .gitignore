@@ -1,0 +1,104 @@
+# Dependencies
+/node_modules/
+/.pnp/
+.pnp.*
+.yarn/*
+!.yarn/patches/
+!.yarn/plugins/
+!.yarn/releases/
+!.yarn/versions/
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+credentials*.json
+service-account*.json
+secrets.*
+
+# JavaScript / Next.js / Vinext / Cloudflare output
+/.next/
+/.vinext/
+/out/
+/dist/
+/.wrangler/
+/.vercel/
+/coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python caches, packages, and environments
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Local databases, queues, and object-storage data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.rdb
+dump.rdb
+postgres-data/
+redis-data/
+minio-data/
+storage/
+uploads/
+
+# Downloaded ML models and experiment output
+models/
+checkpoints/
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.safetensors
+/backend/evaluation/private/
+/backend/evaluation/local/
+/backend/evaluation/results/
+
+# Private/local imagery. Checked-in synthetic fixtures should live elsewhere.
+/private/
+/local-data/
+/test-images-private/
+
+# Logs, temporary files, and backups
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.swp
+/outputs/
+/work/
+
+# Editor and operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates

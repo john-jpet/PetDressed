@@ -1,0 +1,12 @@
+.git
+.env*
+node_modules
+dist
+.vinext
+.wrangler
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+models
+backend/tests
+backend/evaluation

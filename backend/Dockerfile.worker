@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+WORKDIR /app
+ENV HF_HOME=/models/huggingface
+COPY pyproject.toml .
+COPY app ./app
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      torch==2.5.1 torchvision==0.20.1 \
+    && pip install --no-cache-dir ".[cv]"
+COPY scripts ./scripts
+RUN addgroup --system petdressed && adduser --system --ingroup petdressed petdressed \
+    && mkdir -p /models/huggingface \
+    && chown -R petdressed:petdressed /app /models
+USER petdressed
+CMD ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
