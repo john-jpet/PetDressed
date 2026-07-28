@@ -36,7 +36,17 @@ common local service collisions. These can be changed with `API_PORT`,
 `POSTGRES_PORT`, `REDIS_PORT`, `MINIO_PORT`, and `MINIO_CONSOLE_PORT`.
 
 Implementation decisions and milestone verification notes are tracked in
-[`docs/milestones.md`](docs/milestones.md).
+[`docs/milestones.md`](docs/milestones.md). The plan for the React Native
+client, and the shared code it will consume, is in
+[`docs/mobile-plan.md`](docs/mobile-plan.md).
+
+## Shared client code
+
+`shared/` holds the API contract types and a platform-agnostic API client,
+mirroring `backend/app/schemas.py`. It imports nothing from React, Next.js, or
+React Native so the mobile client can consume it unchanged. Web code reaches it
+through the `@shared/*` path alias. When you change an API schema, change
+`shared/types.ts` in the same commit.
 
 ## Verification
 
@@ -46,9 +56,15 @@ python -m pytest -q
 python -m ruff check app tests scripts migrations
 cd ..
 npm run lint
+npm run type-check
 npm test
 docker compose config --quiet
 ```
+
+These same checks run in CI on every pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Note that neither the
+build nor ESLint type-checks the project, so `npm run type-check` is the only
+step that catches type errors.
 
 With the stack running, the synthetic pipeline smoke test is:
 
