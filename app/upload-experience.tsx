@@ -18,6 +18,12 @@ import type {
   OutfitPlan,
   SegmentationResult,
 } from "@shared/types";
+import {
+  ClothingRail,
+  GarmentIcon,
+  HangingGarment,
+  iconForCategory,
+} from "./garment-icons";
 
 type Stage = "idle" | "uploading" | "queued" | "error";
 type Tool = "keep" | "remove" | "box";
@@ -302,6 +308,7 @@ export function UploadExperience() {
       </nav>
 
       <section className="hero">
+        <ClothingRail className="hero-rail" />
         <div className="eyebrow"><span /> 01 // Intake</div>
         <h1>Build your<br /><em>wardrobe.</em></h1>
         <p className="intro">
@@ -365,7 +372,7 @@ export function UploadExperience() {
                 </>
               ) : (
                 <>
-                  <div className="hanger" aria-hidden="true">⌒</div>
+                  <HangingGarment className="hanger" />
                   <strong>Drop the photo here</strong>
                   <span>or pull one from your device</span>
                 </>
@@ -638,6 +645,7 @@ function MetadataReview({
       <AppNav active={3} />
       <section className="metadata-shell">
         <div className="metadata-image">
+          <GarmentIcon name={iconForCategory(category)} className="photo-ghost" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={result.processed_url} alt="Isolated garment" />
           <div className="palette" aria-label="Detected colours">
@@ -844,7 +852,10 @@ function Wardrobe({
         <label className="search-field"><span>Search</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try “navy shirt”" /></label>
         <div className="category-pills">
           {["all","top","bottom","one_piece","outerwear","shoes","accessory"].map((value) => (
-            <button key={value} className={category === value ? "selected" : ""} onClick={() => setCategory(value)}>{value.replace("_", " ")}</button>
+            <button key={value} className={category === value ? "selected" : ""} onClick={() => setCategory(value)}>
+              {value !== "all" && <GarmentIcon name={iconForCategory(value)} className="pill-icon" />}
+              {value.replace("_", " ")}
+            </button>
           ))}
         </div>
         <label className="season-filter">
@@ -862,6 +873,9 @@ function Wardrobe({
           {shown.map((item) => (
             <article className="garment-card" key={item.garment_id}>
               <div className="garment-photo">
+                {/* Silhouette sits behind the photo so a slow or broken image
+                    still reads as the right kind of garment. */}
+                <GarmentIcon name={iconForCategory(item.category)} className="photo-ghost" />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={item.image_url} alt={item.display_name} />
                 {item.availability !== "available" && <span className="state-badge">{item.availability}</span>}
@@ -880,7 +894,13 @@ function Wardrobe({
             </article>
           ))}
         </section>
-      ) : <div className="empty-state"><strong>Nothing matches.</strong><span>Drop a filter or feed it a garment.</span></div>}
+      ) : (
+        <div className="empty-state">
+          <ClothingRail className="empty-rail" count={4} />
+          <strong>Nothing matches.</strong>
+          <span>Drop a filter or feed it a garment.</span>
+        </div>
+      )}
     </main>
   );
 }
@@ -1003,8 +1023,11 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
             <div className="outfit-pieces">
               {active.garments.map((garment) => (
                 <article key={garment.garment_id}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={garment.image_url} alt={garment.display_name} />
+                  <div className="piece-frame">
+                    <GarmentIcon name={iconForCategory(garment.category)} className="photo-ghost" />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={garment.image_url} alt={garment.display_name} />
+                  </div>
                   <strong>{garment.display_name}</strong>
                   <span>{garment.category.replace("_", " ")}</span>
                   <button

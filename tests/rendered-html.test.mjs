@@ -24,6 +24,19 @@ test("server-renders the PetDressed upload experience", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
+test("renders garment silhouettes inline", async () => {
+  const response = await render();
+  const html = await response.text();
+  // Inline SVG rather than image assets, so the artwork survives a strict CSP
+  // and paints before any network request settles.
+  const rail = html.match(/class="rail-item"/g) ?? [];
+  assert.ok(rail.length >= 6, `expected the full garment cycle, got ${rail.length}`);
+  assert.match(html, /<svg[^>]+viewBox="0 0 100 100"/);
+  // Decorative artwork must not reach the accessibility tree.
+  assert.match(html, /aria-hidden="true"/);
+  assert.doesNotMatch(html, /<img[^>]+rail/);
+});
+
 test("links a stylesheet into the document", async () => {
   const response = await render();
   const html = await response.text();
