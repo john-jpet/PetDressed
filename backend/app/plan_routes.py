@@ -49,7 +49,7 @@ from .schemas import (
     ReplaceGarmentRequest,
     ScoreBreakdownResponse,
 )
-from .storage import public_client
+from .storage import presigned_read_url
 from .weather import DailyWeather, OpenMeteoProvider, weather_suitability
 
 router = APIRouter(prefix="/api/v1/plans", tags=["plans"])
@@ -93,14 +93,6 @@ def cached_weather(settings: Settings, payload: PlanGenerateRequest) -> list[Dai
         return [item for item in result if item is not None]
     except (RedisError, ValueError, TypeError, KeyError):
         return None
-
-
-def read_url(key: str, settings: Settings) -> str:
-    return public_client().generate_presigned_url(
-        "get_object",
-        Params={"Bucket": settings.s3_bucket, "Key": key},
-        ExpiresIn=settings.upload_url_ttl_seconds,
-    )
 
 
 def weather_json(weather: DailyWeather | None) -> dict:
@@ -359,7 +351,7 @@ def plan_response(db: Session, plan: OutfitPlan, settings: Settings) -> PlanResp
                         garment_id=garment.id,
                         category=garment.category.value,
                         display_name=garment.display_name or "Unnamed garment",
-                        image_url=read_url(garment.processed_object_key, settings),
+                        image_url=presigned_read_url(garment.processed_object_key, settings),
                     )
                     for _, garment in rows
                 ],
