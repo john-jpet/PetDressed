@@ -1096,11 +1096,22 @@ h2 {
   min-height: 380px;
   padding: 58px 14px 20px;
   display: grid;
-  align-items: center;
+  gap: 18px;
+  justify-items: center;
+  align-content: center;
   background: var(--concrete);
   border: var(--border) solid var(--ink);
   box-shadow: var(--shadow);
   overflow: hidden;
+}
+
+/* The mannequin leads: it shows the outfit as an outfit. The photo row below
+   is the legend, answering which garment is which. */
+.outfit-figure {
+  width: auto;
+  height: 240px;
+  max-width: 100%;
+  filter: drop-shadow(5px 5px 0 rgba(10, 10, 10, 0.18));
 }
 
 .weather-badge {
@@ -1125,17 +1136,25 @@ h2 {
   text-transform: uppercase;
 }
 
+/* Legend under the mannequin. A scrolling row keeps a five-piece outfit on
+   one line at 390px instead of reflowing into a second grid. */
 .outfit-pieces {
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: center;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
   z-index: 1;
 }
 
+.outfit-pieces::-webkit-scrollbar {
+  display: none;
+}
+
 .outfit-pieces article {
-  width: calc(50% - 4px);
+  flex: 0 0 104px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1145,9 +1164,12 @@ h2 {
 .piece-frame {
   position: relative;
   width: 100%;
-  height: 150px;
+  height: 96px;
+  background: var(--panel);
+  border: var(--border) solid var(--ink);
   display: grid;
   place-items: center;
+  overflow: hidden;
 }
 
 .outfit-pieces img {
@@ -1329,12 +1351,16 @@ h2 {
     grid-template-columns: 1fr 1fr;
   }
 
+  .outfit-pieces {
+    justify-content: center;
+  }
+
   .outfit-pieces article {
-    width: calc(33.333% - 6px);
+    flex-basis: 120px;
   }
 
   .piece-frame {
-    height: 190px;
+    height: 112px;
   }
 
   .header-actions {
@@ -1464,8 +1490,12 @@ h2 {
     padding: 66px 24px 24px;
   }
 
+  .outfit-figure {
+    height: 320px;
+  }
+
   .piece-frame {
-    height: 250px;
+    height: 124px;
   }
 
   .settings-panel {
