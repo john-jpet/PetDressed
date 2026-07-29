@@ -49,7 +49,7 @@ from .schemas import (
     ReplaceGarmentRequest,
     ScoreBreakdownResponse,
 )
-from .storage import presigned_read_url
+from .storage import garment_colors_for, presigned_read_url
 from .weather import DailyWeather, OpenMeteoProvider, weather_suitability
 
 router = APIRouter(prefix="/api/v1/plans", tags=["plans"])
@@ -335,14 +335,22 @@ def plan_response(db: Session, plan: OutfitPlan, settings: Settings) -> PlanResp
         .where(OutfitPlanDay.plan_id == plan.id)
         .order_by(OutfitPlanDay.plan_date)
     ).all()
+    # Load every day's garments at once. Querying inside the loop cost one
+    # round trip per day, and the palettes below would have cost one per
+    # garment per day on top of that.
+    garment_rows = db.execute(
+        select(OutfitPlanGarment.plan_day_id, Garment)
+        .join(Garment, Garment.id == OutfitPlanGarment.garment_id)
+        .where(OutfitPlanGarment.plan_day_id.in_([day.id for day in day_records]))
+    ).all()
+    garments_by_day: dict[uuid.UUID, list[Garment]] = {}
+    for plan_day_id, garment in garment_rows:
+        garments_by_day.setdefault(plan_day_id, []).append(garment)
+    palettes = garment_colors_for(db, [garment.id for _, garment in garment_rows])
+
     response_days = []
     relaxed = set()
     for day in day_records:
-        rows = db.execute(
-            select(OutfitPlanGarment, Garment)
-            .join(Garment, Garment.id == OutfitPlanGarment.garment_id)
-            .where(OutfitPlanGarment.plan_day_id == day.id)
-        ).all()
         response_days.append(
             PlannedDayResponse(
                 date=day.plan_date.isoformat(),
@@ -350,10 +358,14 @@ def plan_response(db: Session, plan: OutfitPlan, settings: Settings) -> PlanResp
                     PlanGarmentResponse(
                         garment_id=garment.id,
                         category=garment.category.value,
+                        subcategory=garment.subcategory,
                         display_name=garment.display_name or "Unnamed garment",
+                        colors=palettes.get(garment.id, []),
+                        pattern=garment.pattern,
                         image_url=presigned_read_url(garment.processed_object_key, settings),
+                        original_url=presigned_read_url(garment.original_object_key, settings),
                     )
-                    for _, garment in rows
+                    for garment in garments_by_day.get(day.id, [])
                 ],
                 score=ScoreBreakdownResponse(**day.score_breakdown),
                 explanations=day.explanations,

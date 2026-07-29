@@ -54,3 +54,22 @@ def test_cors_allows_wardrobe_mutation_methods(monkeypatch):
                 },
             )
             assert response.status_code == 200
+
+
+def test_garment_payloads_expose_original_photo_and_appearance():
+    """Clients need the uncropped photo and enough to depict the garment.
+
+    Segmentation crops badly often enough that the cutout alone is a poor
+    choice for recognition, and the mannequin renderer needs colour and
+    pattern rather than an image.
+    """
+    schemas = app.openapi()["components"]["schemas"]
+
+    card = schemas["GarmentCardResponse"]["properties"]
+    assert "original_url" in card
+    assert "image_url" in card, "the cutout stays available alongside the original"
+    assert "pattern" in card
+
+    planned = schemas["PlanGarmentResponse"]["properties"]
+    for field in ("original_url", "image_url", "colors", "pattern", "subcategory"):
+        assert field in planned, f"PlanGarmentResponse is missing {field}"

@@ -24,6 +24,7 @@ import {
   HangingGarment,
   iconForCategory,
 } from "./garment-icons";
+import { Mannequin } from "./mannequin";
 
 type Stage = "idle" | "uploading" | "queued" | "error";
 type Tool = "keep" | "remove" | "box";
@@ -876,8 +877,11 @@ function Wardrobe({
                 {/* Silhouette sits behind the photo so a slow or broken image
                     still reads as the right kind of garment. */}
                 <GarmentIcon name={iconForCategory(item.category)} className="photo-ghost" />
+                {/* The uploaded photo, not the cutout: segmentation crops to the
+                    mask bounding box, and a poor mask makes the item harder to
+                    recognise than the original ever was. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.image_url} alt={item.display_name} />
+                <img className="photo-original" src={item.original_url} alt={item.display_name} />
                 {item.availability !== "available" && <span className="state-badge">{item.availability}</span>}
               </div>
               <div className="garment-details">
@@ -1020,13 +1024,21 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
               <strong>{typeof active.weather.planning_temp_c === "number" ? `${Math.round(active.weather.planning_temp_c)}°C` : "Forecast unavailable"}</strong>
               <span>{active.provisional_weather ? "Provisional forecast" : `${active.weather.precipitation_probability ?? 0}% rain`}</span>
             </div>
+            {/* The mannequin answers "what does this outfit look like"; the row
+                below answers "which of my things is that". Neither does both
+                well, so the day shows both. */}
+            <Mannequin garments={active.garments} className="outfit-figure" />
             <div className="outfit-pieces">
               {active.garments.map((garment) => (
                 <article key={garment.garment_id}>
                   <div className="piece-frame">
                     <GarmentIcon name={iconForCategory(garment.category)} className="photo-ghost" />
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={garment.image_url} alt={garment.display_name} />
+                    <img
+                      className="photo-original"
+                      src={garment.original_url}
+                      alt={garment.display_name}
+                    />
                   </div>
                   <strong>{garment.display_name}</strong>
                   <span>{garment.category.replace("_", " ")}</span>
