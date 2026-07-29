@@ -876,8 +876,11 @@ function Wardrobe({
                 {/* Silhouette sits behind the photo so a slow or broken image
                     still reads as the right kind of garment. */}
                 <GarmentIcon name={iconForCategory(item.category)} className="photo-ghost" />
+                {/* The uploaded photo, not the cutout: segmentation crops to the
+                    mask bounding box, and a poor mask makes the item harder to
+                    recognise than the original ever was. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.image_url} alt={item.display_name} />
+                <img className="photo-original" src={item.original_url} alt={item.display_name} />
                 {item.availability !== "available" && <span className="state-badge">{item.availability}</span>}
               </div>
               <div className="garment-details">
@@ -1026,7 +1029,11 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
                   <div className="piece-frame">
                     <GarmentIcon name={iconForCategory(garment.category)} className="photo-ghost" />
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={garment.image_url} alt={garment.display_name} />
+                    <img
+                      className="photo-original"
+                      src={garment.original_url}
+                      alt={garment.display_name}
+                    />
                   </div>
                   <strong>{garment.display_name}</strong>
                   <span>{garment.category.replace("_", " ")}</span>

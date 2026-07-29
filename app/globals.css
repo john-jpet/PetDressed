@@ -900,6 +900,21 @@ h2 {
   transition: transform 0.2s steps(3);
 }
 
+/* Uploaded photos are uncropped rectangles with their own background, unlike
+   the transparent cutouts these replaced. Filling the tile edge to edge reads
+   as deliberate, where letterboxing a raw photo does not. */
+.garment-photo img.photo-original {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* In the planner the piece sits against the stage rather than its own tile, so
+   keep the whole garment visible instead of cropping to fill. */
+.outfit-pieces img.photo-original {
+  object-fit: contain;
+}
+
 .garment-card:hover .garment-photo img {
   transform: scale(1.06) rotate(-1.5deg);
 }
