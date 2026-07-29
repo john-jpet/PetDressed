@@ -23,7 +23,7 @@
     ],
     "paths": {
       "@/*": ["./*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./packages/shared/*"]
     }
   },
   "include": [
