@@ -6,11 +6,11 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs tests/*.test.mts",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "dev": "cd apps/web && vinext dev",
+    "build": "cd apps/web && vinext build",
+    "start": "cd apps/web && vinext start",
+    "test": "npm run build && node --test apps/web/tests/*.test.mjs apps/web/tests/*.test.mts",
+    "lint": "eslint . --ignore-pattern \"**/dist/**\" --ignore-pattern \"**/.next/**\"",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

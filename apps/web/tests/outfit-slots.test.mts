@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assignSlots, paintOrder, slotForCategory } from "../shared/outfit-slots.ts";
+import { assignSlots, paintOrder, slotForCategory } from "../../../packages/shared/outfit-slots.ts";
 
 const g = (category: string, name = category) => ({ category, display_name: name });
 
