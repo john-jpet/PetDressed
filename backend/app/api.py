@@ -408,7 +408,9 @@ def garment_card(
         wear_count=garment.wear_count,
         last_worn_at=garment.last_worn_at,
         colors=colors,
+        pattern=garment.pattern,
         image_url=presigned_read_url(garment.processed_object_key, settings),
+        original_url=presigned_read_url(garment.original_object_key, settings),
         similarity=similarity,
     )
 

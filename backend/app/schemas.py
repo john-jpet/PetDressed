@@ -156,7 +156,12 @@ class GarmentCardResponse(BaseModel):
     wear_count: int
     last_worn_at: datetime | None
     colors: list[ColorResponse]
+    pattern: str | None
+    # `image_url` is the segmented cutout; `original_url` is the photo as
+    # uploaded. Segmentation can crop badly, so clients showing a garment for
+    # recognition should prefer the original.
     image_url: str
+    original_url: str
     similarity: float | None = None
 
 
@@ -203,8 +208,14 @@ class PlanGenerateRequest(BaseModel):
 class PlanGarmentResponse(BaseModel):
     garment_id: UUID
     category: str
+    subcategory: str | None
     display_name: str
+    # Colour and pattern let a client depict the outfit without relying on the
+    # photo — see the mannequin renderer.
+    colors: list[ColorResponse]
+    pattern: str | None
     image_url: str
+    original_url: str
 
 
 class ScoreBreakdownResponse(BaseModel):

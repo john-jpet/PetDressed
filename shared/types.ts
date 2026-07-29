@@ -148,7 +148,11 @@ export interface GarmentCard {
   wear_count: number;
   last_worn_at: string | null;
   colors: Color[];
+  pattern: string | null;
+  /** The segmented cutout. Tightly cropped, transparent, and only as good as the mask. */
   image_url: string;
+  /** The photo as uploaded. Prefer this when the user needs to recognise the item. */
+  original_url: string;
   similarity?: number | null;
 }
 
@@ -174,8 +178,13 @@ export interface ScoreBreakdown {
 export interface PlanGarment {
   garment_id: string;
   category: string;
+  subcategory: string | null;
   display_name: string;
+  /** Colour and pattern let a client depict the outfit without the photo. */
+  colors: Color[];
+  pattern: string | null;
   image_url: string;
+  original_url: string;
 }
 
 /** `PlannedDayResponse` — a single day of the plan. */
