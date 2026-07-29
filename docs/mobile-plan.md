@@ -13,12 +13,12 @@ entirely client-side.
 
 ## Repository shape
 
-An earlier draft of this plan proposed moving `app/` to `apps/web/` as a
-week-one task. That is more disruptive than it looks — `vite.config.ts`,
-the Wrangler binding in `worker/index.ts`, `.openai/hosting.json`, and
-`tests/rendered-html.test.mjs` all hard-code the current layout. The move is
-worth doing, but it should be its own change with CI already in place, not a
-prelude to feature work.
+The move from a flat layout to `apps/*` and `packages/*` has now landed, as
+its own change once CI was in place rather than as a prelude to feature work.
+`vite.config.ts`, the Wrangler binding in `worker/index.ts`, and the render
+tests all hard-coded the old layout, so it was never the week-one freebie an
+earlier draft assumed. `.openai/hosting.json` stays at the repository root,
+where the hosting platform expects it.
 
 Note also that `worker/` is **not** an async task worker. It is the Cloudflare
 Worker entry point that serves the frontend. Background processing is Celery,
@@ -27,15 +27,16 @@ in `backend/app/tasks.py`.
 The interim structure avoids the migration while still sharing code:
 
 ```
-shared/            # Platform-agnostic. No React, Next, or React Native imports.
+packages/shared/   # Platform-agnostic. No React, Next, or React Native imports.
   types.ts         # API contract types mirroring backend/app/schemas.py
   api-client.ts    # fetch-based client with an injectable token provider
-app/               # Next.js web client (consumes shared/ via the @shared/* alias)
-worker/            # Cloudflare Worker entry for the web client
+  outfit-slots.ts  # Which garment covers which part of a figure
+apps/web/          # Next.js client, its Worker entry, its tests
+apps/mobile/       # Expo client (not yet created)
 backend/           # FastAPI + Celery
 ```
 
-`shared/` is importable from React Native as-is. When a mobile app is added, it
+`packages/shared/` is importable from React Native as-is. When a mobile app is added, it
 consumes the same two modules; only the token provider differs — Supabase's
 browser client on web, secure storage on device.
 

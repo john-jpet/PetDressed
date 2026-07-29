@@ -42,11 +42,21 @@ client, and the shared code it will consume, is in
 
 ## Shared client code
 
-`shared/` holds the API contract types and a platform-agnostic API client,
-mirroring `backend/app/schemas.py`. It imports nothing from React, Next.js, or
-React Native so the mobile client can consume it unchanged. Web code reaches it
-through the `@shared/*` path alias. When you change an API schema, change
-`shared/types.ts` in the same commit.
+`packages/shared/` holds the API contract types, a platform-agnostic API
+client, and the outfit slot rules, mirroring `backend/app/schemas.py`. It
+imports nothing from React, Next.js, or React Native so the mobile client can
+consume it unchanged. Web code reaches it through the `@shared/*` path alias.
+When you change an API schema, change `packages/shared/types.ts` in the same
+commit.
+
+The repository is laid out as `apps/*` for deployable clients and `packages/*`
+for code shared between them:
+
+```
+apps/web/          Next.js client, its Cloudflare Worker entry, and its tests
+packages/shared/   Platform-agnostic contract, API client, and outfit rules
+backend/           FastAPI application and Celery worker
+```
 
 ## Verification
 
