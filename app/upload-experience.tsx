@@ -12,89 +12,21 @@ import {
 } from "react";
 import { createClient } from "@supabase/supabase-js";
 import Image from "next/image";
+import type {
+  GarmentCard,
+  MetadataResult,
+  OutfitPlan,
+  SegmentationResult,
+} from "@shared/types";
+import {
+  ClothingRail,
+  GarmentIcon,
+  HangingGarment,
+  iconForCategory,
+} from "./garment-icons";
 
 type Stage = "idle" | "uploading" | "queued" | "error";
 type Tool = "keep" | "remove" | "box";
-
-interface SegmentationResult {
-  garment_id: string;
-  processed_url: string;
-  inference_backend: string;
-  degraded: boolean;
-  inference_warning: string | null;
-  preview_url: string;
-  mask_url: string;
-  mask_area_ratio: number;
-  confidence: number;
-  bbox: { x_min: number; y_min: number; x_max: number; y_max: number };
-  model_name: string;
-  model_version: string;
-}
-
-interface ColorValue {
-  hex: string;
-  lab: [number, number, number];
-  proportion: number;
-}
-
-interface MetadataResult {
-  garment_id: string;
-  display_name: string | null;
-  predicted_category: string;
-  category_confidence: number;
-  category_alternatives: Array<{ value: string; confidence: number }>;
-  subcategory: string | null;
-  formality: number;
-  warmth: number;
-  breathability: number;
-  water_resistance: number;
-  pattern: string;
-  colors: ColorValue[];
-  seasons: { spring: number; summer: number; fall: number; winter: number };
-  processed_url: string;
-}
-
-interface GarmentCard {
-  garment_id: string;
-  display_name: string;
-  category: string;
-  subcategory: string | null;
-  availability: string;
-  planner_enabled: boolean;
-  wear_count: number;
-  colors: ColorValue[];
-  image_url: string;
-}
-
-interface PlannedOutfit {
-  date: string;
-  garments: Array<{
-    garment_id: string;
-    category: string;
-    display_name: string;
-    image_url: string;
-  }>;
-  score: {
-    weather: number;
-    compatibility: number;
-    rotation: number;
-    preference: number;
-    event: number;
-    total: number;
-  };
-  explanations: string[];
-  provisional_weather: boolean;
-  weather: Record<string, number | string | boolean>;
-  is_locked: boolean;
-}
-
-interface OutfitPlan {
-  plan_id: string;
-  status: string;
-  solve_time_ms: number;
-  relaxed_constraints: string[];
-  days: PlannedOutfit[];
-}
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:58000";
 
@@ -125,10 +57,11 @@ export function UploadExperience() {
   const supabase = useMemo(() => getSupabase(), []);
 
   useEffect(() => {
-    if (!supabase) return;
+    const client = supabase;
+    if (!client) return;
     let active = true;
-    async function restoreSession() {
-      const { data } = await supabase.auth.getSession();
+    const restoreSession = async () => {
+      const { data } = await client.auth.getSession();
       if (!active || !data.session) return;
       const token = data.session.access_token;
       setAccessToken(token);
@@ -148,9 +81,9 @@ export function UploadExperience() {
       } catch {
         setError("Signed in, but the processing service is temporarily unavailable.");
       }
-    }
+    };
     restoreSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = client.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       setSignedIn(Boolean(session));
       setAccessToken(session?.access_token ?? "");
@@ -375,19 +308,20 @@ export function UploadExperience() {
       </nav>
 
       <section className="hero">
-        <div className="eyebrow"><span /> YOUR DIGITAL WARDROBE</div>
-        <h1>Let’s meet your<br /><em>favourite pieces.</em></h1>
+        <ClothingRail className="hero-rail" />
+        <div className="eyebrow"><span /> 01 // Intake</div>
+        <h1>Build your<br /><em>wardrobe.</em></h1>
         <p className="intro">
-          Start with one garment on a simple background. We’ll tidy the photo
-          and help with the details—you’re always in control.
+          One garment. One photo. Plain background. The machine cuts it out and
+          guesses the details — you approve or override every single call.
         </p>
 
         {!signedIn ? (
           <form className="auth-card" onSubmit={signIn}>
             <div>
               <span className="step-number">01</span>
-              <h2>{authMode === "signin" ? "Sign in to your wardrobe" : "Create your wardrobe"}</h2>
-              <p>Your clothing and photos stay private to your account.</p>
+              <h2>{authMode === "signin" ? "Access your wardrobe" : "Claim your wardrobe"}</h2>
+              <p>Private by default — your photos never leave your account.</p>
             </div>
             <label>
               Email
@@ -407,9 +341,9 @@ export function UploadExperience() {
             <div className="upload-heading">
               <div>
                 <span className="step-number">01</span>
-                <h2>Add a garment</h2>
+                <h2>Feed it a garment</h2>
               </div>
-              <span className="private-note">Private by default</span>
+              <span className="private-note">Private</span>
             </div>
 
             <div
@@ -433,14 +367,14 @@ export function UploadExperience() {
                   />
                   <div>
                     <strong>{file.name}</strong>
-                    <span>{(file.size / 1024 / 1024).toFixed(1)} MB · Ready to upload</span>
+                    <span>{(file.size / 1024 / 1024).toFixed(1)} MB · Locked and loaded</span>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="hanger" aria-hidden="true">⌒</div>
-                  <strong>Drop a garment photo here</strong>
-                  <span>or choose one from your device</span>
+                  <HangingGarment className="hanger" />
+                  <strong>Drop the photo here</strong>
+                  <span>or pull one from your device</span>
                 </>
               )}
               <label className="file-button">
@@ -454,19 +388,19 @@ export function UploadExperience() {
             </div>
 
             <div className="tips">
-              <strong>A quick tip</strong>
-              <span>Lay the item flat, show the whole piece, and use a contrasting background.</span>
+              <strong>Rules of engagement</strong>
+              <span>Lay it flat. Show the whole piece. Use a background that fights it.</span>
             </div>
             {error && <p className="error" role="alert">{error}</p>}
             {notice && <p className="success" role="status">{notice}</p>}
             {stage === "queued" ? (
               <div className="success" role="status">
-                <strong>Photo safely received.</strong>
-                <span className="processing-line"><i /> Removing the background…</span>
+                <strong>Photo received.</strong>
+                <span className="processing-line"><i /> Stripping the background…</span>
               </div>
             ) : (
               <button className="primary full" disabled={!file || stage === "uploading"} onClick={upload}>
-                {stage === "uploading" ? "Uploading securely…" : "Add to my wardrobe →"}
+                {stage === "uploading" ? "Uploading…" : "Send it →"}
               </button>
             )}
           </section>
@@ -475,7 +409,7 @@ export function UploadExperience() {
 
       <aside className="side-note" aria-label="Photography guidance">
         <span className="spark">✣</span>
-        <p><strong>One piece at a time</strong><br />A clear, front-facing photo gives the best result.</p>
+        <p><strong>One piece at a time.</strong><br />Front-facing. Sharp. No exceptions.</p>
       </aside>
     </main>
   );
@@ -585,9 +519,9 @@ function SegmentationReview({
       </nav>
       <section className="review-shell">
         <div className="review-copy">
-          <div className="eyebrow"><span /> A QUICK CHECK</div>
-          <h1>Did we catch the<br /><em>whole garment?</em></h1>
-          <p className="intro">Pink shows what we found. Brush over anything we missed or remove background that slipped in.</p>
+          <div className="eyebrow"><span /> 02 // Verify</div>
+          <h1>Check the<br /><em>cut.</em></h1>
+          <p className="intro">Brush back anything the machine ate. Scrub out any background that survived. Your call is final.</p>
           <div className="toolbox" aria-label="Mask correction tools">
             <button className={tool === "keep" ? "selected" : ""} onClick={() => setTool("keep")}>＋ Keep</button>
             <button className={tool === "remove" ? "selected" : ""} onClick={() => setTool("remove")}>− Remove</button>
@@ -599,9 +533,9 @@ function SegmentationReview({
         </div>
         <div className="review-card">
           <div className="preview-toolbar">
-            <strong>Background preview</strong>
+            <strong>Cutout</strong>
             <button onClick={() => setShowOriginal((value) => !value)}>
-              {showOriginal ? "Show selection" : "Show result"}
+              {showOriginal ? "Show result" : "Show original"}
             </button>
           </div>
           <div
@@ -637,12 +571,12 @@ function SegmentationReview({
           </div>
           <div className="review-actions">
             <button className="secondary" disabled={busy} onClick={onReplace}>
-              Use another photo
+              Scrap it
             </button>
             <button className="secondary" disabled={busy} onClick={retry}>
-              {busy ? "Working…" : points.length || brush.length || box ? "Apply corrections" : "Retry automatically"}
+              {busy ? "Working…" : points.length || brush.length || box ? "Apply fixes" : "Run again"}
             </button>
-            <button className="primary" disabled={busy} onClick={accept}>Looks good →</button>
+            <button className="primary" disabled={busy} onClick={accept}>Ship it →</button>
           </div>
         </div>
       </section>
@@ -711,6 +645,7 @@ function MetadataReview({
       <AppNav active={3} />
       <section className="metadata-shell">
         <div className="metadata-image">
+          <GarmentIcon name={iconForCategory(category)} className="photo-ghost" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={result.processed_url} alt="Isolated garment" />
           <div className="palette" aria-label="Detected colours">
@@ -720,10 +655,10 @@ function MetadataReview({
           </div>
         </div>
         <form className="metadata-form" onSubmit={confirm}>
-          <div className="eyebrow"><span /> ALMOST THERE</div>
-          <h1>Tell us about<br /><em>this piece.</em></h1>
+          <div className="eyebrow"><span /> 03 // Label</div>
+          <h1>Name the<br /><em>evidence.</em></h1>
           <p className="confidence-note">
-            {result.degraded ? "Needs your input" : "Suggested from the photo"} ·{" "}
+            {result.degraded ? "Needs your input" : "Guessed from the photo"} ·{" "}
             {Math.round(result.category_confidence * 100)}% category confidence ·{" "}
             {result.inference_backend}
           </p>
@@ -761,7 +696,7 @@ function MetadataReview({
             </div>
           </div>
           {error && <p className="error" role="alert">{error}</p>}
-          <button className="primary full" disabled={busy}>{busy ? "Saving…" : "Add to wardrobe →"}</button>
+          <button className="primary full" disabled={busy}>{busy ? "Saving…" : "Commit to wardrobe →"}</button>
         </form>
       </section>
     </main>
@@ -904,11 +839,11 @@ function Wardrobe({
     <main className="wardrobe-page">
       <AppNav active={1} onSettings={() => setShowSettings(true)} />
       <section className="wardrobe-header">
-        <div><div className="eyebrow"><span /> YOUR COLLECTION</div><h1>A wardrobe that<br /><em>works together.</em></h1></div>
+        <div><div className="eyebrow"><span /> The archive</div><h1>Every piece<br /><em>on file.</em></h1></div>
         <div className="header-actions">
           <button className="secondary" onClick={onAdd}>＋ Add piece</button>
           <button className="primary" onClick={generatePlan} disabled={planning}>
-            {planning ? "Planning…" : "Plan my week →"}
+            {planning ? "Solving…" : "Plan the week →"}
           </button>
         </div>
       </section>
@@ -917,7 +852,10 @@ function Wardrobe({
         <label className="search-field"><span>Search</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try “navy shirt”" /></label>
         <div className="category-pills">
           {["all","top","bottom","one_piece","outerwear","shoes","accessory"].map((value) => (
-            <button key={value} className={category === value ? "selected" : ""} onClick={() => setCategory(value)}>{value.replace("_", " ")}</button>
+            <button key={value} className={category === value ? "selected" : ""} onClick={() => setCategory(value)}>
+              {value !== "all" && <GarmentIcon name={iconForCategory(value)} className="pill-icon" />}
+              {value.replace("_", " ")}
+            </button>
           ))}
         </div>
         <label className="season-filter">
@@ -935,6 +873,9 @@ function Wardrobe({
           {shown.map((item) => (
             <article className="garment-card" key={item.garment_id}>
               <div className="garment-photo">
+                {/* Silhouette sits behind the photo so a slow or broken image
+                    still reads as the right kind of garment. */}
+                <GarmentIcon name={iconForCategory(item.category)} className="photo-ghost" />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={item.image_url} alt={item.display_name} />
                 {item.availability !== "available" && <span className="state-badge">{item.availability}</span>}
@@ -953,7 +894,13 @@ function Wardrobe({
             </article>
           ))}
         </section>
-      ) : <div className="empty-state"><strong>No pieces found.</strong><span>Try another filter or add a garment.</span></div>}
+      ) : (
+        <div className="empty-state">
+          <ClothingRail className="empty-rail" count={4} />
+          <strong>Nothing matches.</strong>
+          <span>Drop a filter or feed it a garment.</span>
+        </div>
+      )}
     </main>
   );
 }
@@ -1001,9 +948,9 @@ function Settings({ token, onBack }: { token: string; onBack: () => void }) {
       <AppNav active={0} />
       <form className="settings-panel" onSubmit={save}>
         <button className="back-link" type="button" onClick={onBack}>← Wardrobe</button>
-        <div className="eyebrow"><span /> MAKE IT YOURS</div>
-        <h1>Plan around<br /><em>your real life.</em></h1>
-        <p className="intro">Your approximate location is used only for weather-aware planning.</p>
+        <div className="eyebrow"><span /> Parameters</div>
+        <h1>Set the<br /><em>constraints.</em></h1>
+        <p className="intro">Your approximate location feeds the forecast. Nothing else uses it.</p>
         <div className="form-grid">
           <label>City<input value={value.city ?? ""} onChange={(event) => setValue({ ...value, city: event.target.value || null })} placeholder="Toronto" /></label>
           <label>Timezone<input value={value.timezone} onChange={(event) => setValue({ ...value, timezone: event.target.value })} /></label>
@@ -1045,12 +992,12 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
       <section className="planner-header">
         <button className="back-link" onClick={onBack}>← Wardrobe</button>
         <div>
-          <div className="eyebrow"><span /> YOUR WEEK, THOUGHTFULLY DRESSED</div>
-          <h1>Seven days.<br /><em>Nothing left to guess.</em></h1>
+          <div className="eyebrow"><span /> Solved</div>
+          <h1>Seven days.<br /><em>Zero guesswork.</em></h1>
         </div>
         <div className="plan-health">
-          <strong>{plan.status === "optimal" ? "Best plan found" : "A practical plan"}</strong>
-          <span>{plan.solve_time_ms} ms · {plan.relaxed_constraints.length ? `${plan.relaxed_constraints.join(", ")} relaxed` : "all preferences met"}</span>
+          <strong>{plan.status === "optimal" ? "Optimal" : "Feasible"}</strong>
+          <span>{plan.solve_time_ms} ms · {plan.relaxed_constraints.length ? `${plan.relaxed_constraints.join(", ")} relaxed` : "all constraints met"}</span>
         </div>
       </section>
       <section className="week-strip" aria-label="Weekly outfits">
@@ -1076,8 +1023,11 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
             <div className="outfit-pieces">
               {active.garments.map((garment) => (
                 <article key={garment.garment_id}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={garment.image_url} alt={garment.display_name} />
+                  <div className="piece-frame">
+                    <GarmentIcon name={iconForCategory(garment.category)} className="photo-ghost" />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={garment.image_url} alt={garment.display_name} />
+                  </div>
                   <strong>{garment.display_name}</strong>
                   <span>{garment.category.replace("_", " ")}</span>
                   <button
@@ -1093,8 +1043,8 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
             </div>
           </div>
           <aside className="plan-reasoning">
-            <span className="step-number">WHY THIS WORKS</span>
-            <h2>{new Date(`${active.date}T12:00:00`).toLocaleDateString("en-CA", { weekday: "long" })}’s outfit</h2>
+            <span className="step-number">The reasoning</span>
+            <h2>{new Date(`${active.date}T12:00:00`).toLocaleDateString("en-CA", { weekday: "long" })}</h2>
             <ul>{active.explanations.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             <div className="score-list">
               <span>Weather <i style={{ width: `${Math.min(100, active.score.weather / 5)}%` }} /></span>
@@ -1102,10 +1052,10 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
               <span>Rotation <i style={{ width: `${active.score.rotation}%` }} /></span>
             </div>
             <button className="primary full" disabled={Boolean(busyDay)} onClick={() => update(`/api/v1/plans/${plan.plan_id}/days/${active.date}/lock`)}>
-              {active.is_locked ? "Unlock this day" : "Lock this outfit"}
+              {active.is_locked ? "Unlock this day" : "Lock it in"}
             </button>
             <button className="secondary full" disabled={Boolean(busyDay) || active.is_locked} onClick={() => update(`/api/v1/plans/${plan.plan_id}/days/${active.date}/regenerate`, { preserve_garment_ids: [], exclude_previous_selection: true })}>
-              Try another outfit
+              Solve again
             </button>
           </aside>
         </section>

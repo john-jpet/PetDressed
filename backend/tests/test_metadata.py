@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from PIL import Image, ImageDraw
 
 from app.metadata import extract_palette, infer_baseline_metadata, rgb_to_lab, visual_embedding
@@ -47,6 +48,3 @@ def test_unknown_filename_does_not_invent_a_tshirt_classification():
     assert output.subcategory.value == ""
     assert output.subcategory.confidence == 0
     assert output.model_name == "deterministic-test-fallback"
-
-
-import pytest

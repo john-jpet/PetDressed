@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref; the full suite is slow enough that
+# queueing stale commits wastes more than it protects.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (ruff + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check app tests scripts migrations
+
+      - name: Test
+        run: python -m pytest -q
+
+  frontend:
+    name: Frontend (lint + types + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `npm ci` is the correct command here, but the committed lockfile is not
+      # currently in sync with package.json (`@emnapi/*` are missing), so it
+      # fails on a clean checkout. Regenerating the lockfile drops the
+      # cross-platform optional binaries, so that fix belongs in its own change
+      # rather than riding along here. Switch back to `npm ci` once the
+      # lockfile is regenerated on the team's toolchain.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      # Neither the build nor eslint type-checks, so this step is the only
+      # thing standing between a type error and production.
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build and test
+        run: npm test
+
+  compose:
+    name: Docker Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose config --quiet

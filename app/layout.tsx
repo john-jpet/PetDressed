@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Fraunces } from "next/font/google";
+import { Archivo_Black, Space_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const display = Archivo_Black({
+  variable: "--font-display",
+  weight: "400",
   subsets: ["latin"],
 });
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+const mono = Space_Mono({
+  variable: "--font-mono",
+  weight: ["400", "700"],
   subsets: ["latin"],
 });
 
@@ -40,7 +42,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${fraunces.variable}`}
+        className={`${display.variable} ${mono.variable}`}
       >
         {children}
       </body>
