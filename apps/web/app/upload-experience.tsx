@@ -24,6 +24,7 @@ import {
   HangingGarment,
   iconForCategory,
 } from "./garment-icons";
+import { Mannequin } from "./mannequin";
 
 type Stage = "idle" | "uploading" | "queued" | "error";
 type Tool = "keep" | "remove" | "box";
@@ -1023,6 +1024,10 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
               <strong>{typeof active.weather.planning_temp_c === "number" ? `${Math.round(active.weather.planning_temp_c)}°C` : "Forecast unavailable"}</strong>
               <span>{active.provisional_weather ? "Provisional forecast" : `${active.weather.precipitation_probability ?? 0}% rain`}</span>
             </div>
+            {/* The mannequin answers "what does this outfit look like"; the row
+                below answers "which of my things is that". Neither does both
+                well, so the day shows both. */}
+            <Mannequin garments={active.garments} className="outfit-figure" />
             <div className="outfit-pieces">
               {active.garments.map((garment) => (
                 <article key={garment.garment_id}>
