@@ -14,7 +14,6 @@ from .models import (
     Availability,
     Garment,
     GarmentCategory,
-    GarmentColor,
     GarmentPrediction,
     GarmentSeason,
     MetadataSource,
@@ -41,7 +40,7 @@ from .schemas import (
     UserSettingsUpdate,
     WardrobeResponse,
 )
-from .storage import internal_client, public_client
+from .storage import garment_colors_for, internal_client, presigned_read_url, public_client
 from .tasks import (
     delete_garment_artifacts,
     extract_garment_metadata,
@@ -194,14 +193,6 @@ def garment_status(
     )
 
 
-def temporary_read_url(object_key: str, settings: Settings) -> str:
-    return public_client().generate_presigned_url(
-        "get_object",
-        Params={"Bucket": settings.s3_bucket, "Key": object_key},
-        ExpiresIn=settings.upload_url_ttl_seconds,
-    )
-
-
 @router.get(
     "/garments/{garment_id}/segmentation",
     response_model=SegmentationResultResponse,
@@ -223,9 +214,9 @@ def segmentation_result(
         raise HTTPException(status_code=409, detail="Segmentation is not ready for review")
     return SegmentationResultResponse(
         garment_id=garment.id,
-        processed_url=temporary_read_url(garment.processed_object_key, settings),
-        preview_url=temporary_read_url(garment.preview_object_key, settings),
-        mask_url=temporary_read_url(garment.mask_object_key, settings),
+        processed_url=presigned_read_url(garment.processed_object_key, settings),
+        preview_url=presigned_read_url(garment.preview_object_key, settings),
+        mask_url=presigned_read_url(garment.mask_object_key, settings),
         mask_area_ratio=garment.mask_area_ratio or 0,
         bbox=garment.segmentation_bbox,
         confidence=garment.segmentation_confidence or 0,
@@ -310,19 +301,7 @@ def accept_segmentation(
 
 
 def garment_colors(db: Session, garment_id: uuid.UUID) -> list[ColorResponse]:
-    records = db.scalars(
-        select(GarmentColor)
-        .where(GarmentColor.garment_id == garment_id)
-        .order_by(GarmentColor.rank)
-    ).all()
-    return [
-        ColorResponse(
-            hex=color.hex_value,
-            lab=(color.lab_l, color.lab_a, color.lab_b),
-            proportion=color.proportion,
-        )
-        for color in records
-    ]
+    return garment_colors_for(db, [garment_id]).get(garment_id, [])
 
 
 def garment_seasons(db: Session, garment_id: uuid.UUID) -> dict[str, int]:
@@ -368,7 +347,7 @@ def metadata_review(
         pattern=garment.pattern or "unknown",
         colors=garment_colors(db, garment.id),
         seasons=garment_seasons(db, garment.id),
-        processed_url=temporary_read_url(garment.processed_object_key, settings),
+        processed_url=presigned_read_url(garment.processed_object_key, settings),
         inference_backend=garment.embedding_model or "unknown",
         degraded=garment.embedding_model == "deterministic-test-fallback",
         inference_warning=garment.processing_error_message,
@@ -429,7 +408,9 @@ def garment_card(
         wear_count=garment.wear_count,
         last_worn_at=garment.last_worn_at,
         colors=colors,
-        image_url=temporary_read_url(garment.processed_object_key, settings),
+        pattern=garment.pattern,
+        image_url=presigned_read_url(garment.processed_object_key, settings),
+        original_url=presigned_read_url(garment.original_object_key, settings),
         similarity=similarity,
     )
 
@@ -483,8 +464,9 @@ def list_garments(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    palettes = garment_colors_for(db, [item.id for item in garments])
     return WardrobeResponse(
-        items=[garment_card(item, garment_colors(db, item.id), settings) for item in garments],
+        items=[garment_card(item, palettes.get(item.id, []), settings) for item in garments],
         page=page,
         page_size=page_size,
         total=total,
@@ -559,8 +541,9 @@ def similar_garments(
         .order_by(distance)
         .limit(10)
     ).all()
+    palettes = garment_colors_for(db, [item.id for item, _ in rows])
     return [
-        garment_card(item, garment_colors(db, item.id), settings, 1.0 - float(item_distance))
+        garment_card(item, palettes.get(item.id, []), settings, 1.0 - float(item_distance))
         for item, item_distance in rows
     ]
 
