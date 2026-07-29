@@ -11,6 +11,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Node strips types natively, so tests import shared modules by their real
+    // `.ts` path. Safe here because the project never emits.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
