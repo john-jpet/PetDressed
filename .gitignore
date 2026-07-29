@@ -25,13 +25,14 @@ service-account*.json
 secrets.*
 
 # JavaScript / Next.js / Vinext / Cloudflare output
-/.next/
-/.vinext/
-/out/
-/dist/
-/.wrangler/
-/.vercel/
-/coverage/
+# Unanchored: build output lands under apps/*, not the repository root.
+.next/
+.vinext/
+out/
+dist/
+.wrangler/
+.vercel/
+coverage/
 *.tsbuildinfo
 next-env.d.ts
 
