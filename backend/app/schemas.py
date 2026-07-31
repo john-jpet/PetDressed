@@ -165,6 +165,26 @@ class GarmentCardResponse(BaseModel):
     similarity: float | None = None
 
 
+class GarmentDetailResponse(BaseModel):
+    garment_id: UUID
+    display_name: str
+    category: str
+    subcategory: str | None
+    availability: str
+    planner_enabled: bool
+    wear_count: int
+    last_worn_at: datetime | None
+    colors: list[ColorResponse]
+    pattern: str | None
+    image_url: str
+    original_url: str
+    formality: int
+    warmth: int
+    breathability: int
+    water_resistance: int
+    seasons: dict[Literal["spring", "summer", "fall", "winter"], int]
+
+
 class WardrobeResponse(BaseModel):
     items: list[GarmentCardResponse]
     page: int
@@ -176,6 +196,23 @@ class GarmentUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     availability: Literal["available", "laundry", "unavailable", "packed", "archived"] | None = None
     planner_enabled: bool | None = None
+    subcategory: str | None = Field(default=None, max_length=64)
+    pattern: Literal[
+        "solid",
+        "striped",
+        "checked",
+        "graphic",
+        "floral",
+        "abstract",
+        "textured",
+        "other",
+        "unknown",
+    ] | None = None
+    formality: int | None = Field(default=None, ge=0, le=5)
+    warmth: int | None = Field(default=None, ge=0, le=5)
+    breathability: int | None = Field(default=None, ge=0, le=5)
+    water_resistance: int | None = Field(default=None, ge=0, le=5)
+    seasons: dict[Literal["spring", "summer", "fall", "winter"], int] | None = None
 
 
 class LocationRequest(BaseModel):

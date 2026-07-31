@@ -14,8 +14,13 @@ import { createClient } from "@supabase/supabase-js";
 import Image from "next/image";
 import type {
   GarmentCard,
+  GarmentDetail,
+  GarmentUpdatePayload,
+  InProgressGarment,
+  MetadataConfirmPayload,
   MetadataResult,
   OutfitPlan,
+  SeasonScores,
   SegmentationResult,
 } from "@shared/types";
 import {
@@ -26,10 +31,23 @@ import {
 } from "./garment-icons";
 import { Mannequin } from "./mannequin";
 
-type Stage = "idle" | "uploading" | "queued" | "error";
 type Tool = "keep" | "remove" | "box";
+type View = "home" | "wardrobe" | "planner" | "add" | "settings" | "garment";
+type FlowStage =
+  | "idle"
+  | "uploading"
+  | "processing"
+  | "segmentation-review"
+  | "metadata-confirm"
+  | "error";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:58000";
+
+/** Segmentation at or above this confidence is accepted automatically; the
+ * user only sees the mask editor when the model is genuinely unsure. */
+const SEGMENTATION_AUTO_ACCEPT = 0.85;
+
+const SEASONS = ["spring", "summer", "fall", "winter"] as const;
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -38,24 +56,49 @@ function getSupabase() {
 }
 
 export function UploadExperience() {
-  const [file, setFile] = useState<File | null>(null);
-  const [stage, setStage] = useState<Stage>("idle");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [dragging, setDragging] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState("");
-  const [garmentId, setGarmentId] = useState("");
-  const [pollCycle, setPollCycle] = useState(0);
-  const [segmentation, setSegmentation] = useState<SegmentationResult | null>(null);
-  const [metadata, setMetadata] = useState<MetadataResult | null>(null);
-  const [wardrobe, setWardrobe] = useState<GarmentCard[] | null>(null);
+  const [authError, setAuthError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const [view, setView] = useState<View>("home");
+  const [wardrobe, setWardrobe] = useState<GarmentCard[]>([]);
+  const [wardrobeTotal, setWardrobeTotal] = useState(0);
+  const [pendingDraft, setPendingDraft] = useState<InProgressGarment | null>(null);
+  const [selectedGarmentId, setSelectedGarmentId] = useState("");
+
   const [plan, setPlan] = useState<OutfitPlan | null>(null);
-  const preview = useMemo(() => (file ? URL.createObjectURL(file) : ""), [file]);
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState("");
+
   const supabase = useMemo(() => getSupabase(), []);
+
+  async function refreshWardrobe(token: string) {
+    const response = await fetch(`${apiUrl}/api/v1/garments?sort=newest&page_size=8`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    setWardrobe(data.items);
+    setWardrobeTotal(data.total);
+  }
+
+  async function refreshPendingDraft(token: string) {
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/garments/in-progress`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const garment = await response.json();
+        setPendingDraft(garment?.garment_id ? garment : null);
+      }
+    } catch {
+      // Non-critical: the dashboard just won't offer to resume a draft.
+    }
+  }
 
   useEffect(() => {
     const client = supabase;
@@ -67,21 +110,7 @@ export function UploadExperience() {
       const token = data.session.access_token;
       setAccessToken(token);
       setSignedIn(true);
-      try {
-        const response = await fetch(`${apiUrl}/api/v1/garments/in-progress`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (response.ok) {
-          const garment = await response.json();
-          if (garment?.garment_id) {
-            setGarmentId(garment.garment_id);
-            setStage("queued");
-            setPollCycle((current) => current + 1);
-          }
-        }
-      } catch {
-        setError("Signed in, but the processing service is temporarily unavailable.");
-      }
+      await Promise.all([refreshWardrobe(token), refreshPendingDraft(token)]);
     };
     restoreSession();
     const { data: listener } = client.auth.onAuthStateChange((_event, session) => {
@@ -95,6 +124,400 @@ export function UploadExperience() {
     };
   }, [supabase]);
 
+  async function signIn(event: FormEvent) {
+    event.preventDefault();
+    setAuthError("");
+    setNotice("");
+    if (!supabase) {
+      setAuthError("Add your Supabase settings to .env.local to enable sign-in.");
+      return;
+    }
+    const { error } =
+      authMode === "signup"
+        ? await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) {
+      setNotice("Account created. Check your email to confirm it, then return here to sign in.");
+      setAuthMode("signin");
+      return;
+    }
+    const token = data.session.access_token;
+    setAccessToken(token);
+    setSignedIn(true);
+    setView("home");
+    await Promise.all([refreshWardrobe(token), refreshPendingDraft(token)]);
+  }
+
+  function navigate(next: View) {
+    setView(next);
+    if ((next === "home" || next === "wardrobe") && accessToken) {
+      refreshWardrobe(accessToken);
+    }
+  }
+
+  function openGarment(id: string) {
+    setSelectedGarmentId(id);
+    setView("garment");
+  }
+
+  async function discardPendingDraft() {
+    if (!pendingDraft || !accessToken) return;
+    try {
+      await fetch(`${apiUrl}/api/v1/garments/${pendingDraft.garment_id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch {
+      // Best effort — the draft will simply resurface next visit.
+    }
+    setPendingDraft(null);
+  }
+
+  async function generatePlan() {
+    if (!accessToken) return;
+    setPlanning(true);
+    setPlanError("");
+    try {
+      const start = new Date();
+      start.setDate(start.getDate() + 1);
+      const settingsResponse = await fetch(`${apiUrl}/api/v1/settings`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const userSettings = settingsResponse.ok ? await settingsResponse.json() : null;
+      const response = await fetch(`${apiUrl}/api/v1/plans/generate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_date: start.toISOString().slice(0, 10),
+          days: 7,
+          location: {
+            latitude: userSettings?.latitude ?? 43.6532,
+            longitude: userSettings?.longitude ?? -79.3832,
+            timezone: userSettings?.timezone ?? "America/Toronto",
+          },
+          daily_requirements: [],
+          locked_items: [],
+          excluded_items: [],
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        setPlanError(body?.detail?.message ?? body?.detail ?? "We couldn't build a complete week yet.");
+        return;
+      }
+      setPlan(await response.json());
+    } finally {
+      setPlanning(false);
+    }
+  }
+
+  if (!signedIn) {
+    return (
+      <AuthScreen
+        email={email}
+        password={password}
+        authMode={authMode}
+        error={authError}
+        notice={notice}
+        setEmail={setEmail}
+        setPassword={setPassword}
+        setAuthMode={setAuthMode}
+        onSubmit={signIn}
+      />
+    );
+  }
+
+  if (view === "add") {
+    return (
+      <AddGarmentFlow
+        token={accessToken}
+        resumeGarmentId={pendingDraft?.garment_id}
+        onExit={() => {
+          setPendingDraft(null);
+          navigate("home");
+        }}
+        onFinished={() => {
+          setPendingDraft(null);
+          navigate("wardrobe");
+        }}
+      />
+    );
+  }
+
+  return (
+    <>
+      <AppNav active={view} onNavigate={navigate} onSettings={() => navigate("settings")} />
+      {view === "wardrobe" && (
+        <Wardrobe
+          items={wardrobe}
+          token={accessToken}
+          onOpenDetail={openGarment}
+        />
+      )}
+      {view === "planner" && (
+        <PlannerHost
+          plan={plan}
+          planning={planning}
+          planError={planError}
+          token={accessToken}
+          onGenerate={generatePlan}
+        />
+      )}
+      {view === "settings" && <Settings token={accessToken} onBack={() => navigate("wardrobe")} />}
+      {view === "garment" && (
+        <GarmentDetailPage
+          garmentId={selectedGarmentId}
+          token={accessToken}
+          onBack={() => navigate("wardrobe")}
+          onRemoved={() => navigate("wardrobe")}
+        />
+      )}
+      {view === "home" && (
+        <Home
+          wardrobeTotal={wardrobeTotal}
+          recent={wardrobe}
+          pendingDraft={pendingDraft}
+          onResumeDraft={() => navigate("add")}
+          onDiscardDraft={discardPendingDraft}
+          onAdd={() => navigate("add")}
+          onWardrobe={() => navigate("wardrobe")}
+          onPlanner={() => navigate("planner")}
+          onOpenGarment={openGarment}
+        />
+      )}
+    </>
+  );
+}
+
+/* --- Shared navigation ----------------------------------------------------- */
+
+function AppNav({
+  active,
+  onNavigate,
+  onSettings,
+}: {
+  active: View;
+  onNavigate: (view: View) => void;
+  onSettings: () => void;
+}) {
+  return (
+    <nav className="nav" aria-label="Primary navigation">
+      <button className="brand nav-link" onClick={() => onNavigate("home")} aria-label="PetDressed home">
+        <span className="brand-mark" aria-hidden="true">P</span>
+        <span>PetDressed</span>
+      </button>
+      <div className="nav-steps" aria-label="Sections">
+        <button className={active === "home" ? "active" : ""} onClick={() => onNavigate("home")}>Home</button>
+        <button className={active === "wardrobe" ? "active" : ""} onClick={() => onNavigate("wardrobe")}>Wardrobe</button>
+        <button className={active === "planner" ? "active" : ""} onClick={() => onNavigate("planner")}>Planner</button>
+        <button className={active === "add" ? "active" : ""} onClick={() => onNavigate("add")}>Add item</button>
+      </div>
+      <button className="round-button" aria-label="Open settings" onClick={onSettings}>⚙</button>
+    </nav>
+  );
+}
+
+/* --- Auth screen ------------------------------------------------------------ */
+
+function AuthScreen({
+  email,
+  password,
+  authMode,
+  error,
+  notice,
+  setEmail,
+  setPassword,
+  setAuthMode,
+  onSubmit,
+}: {
+  email: string;
+  password: string;
+  authMode: "signin" | "signup";
+  error: string;
+  notice: string;
+  setEmail: (value: string) => void;
+  setPassword: (value: string) => void;
+  setAuthMode: (mode: "signin" | "signup") => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <main>
+      <nav className="nav" aria-label="Primary navigation">
+        <a className="brand" href="#" aria-label="PetDressed home">
+          <span className="brand-mark" aria-hidden="true">P</span>
+          <span>PetDressed</span>
+        </a>
+      </nav>
+
+      <section className="hero">
+        <ClothingRail className="hero-rail" />
+        <div className="eyebrow"><span /> Welcome</div>
+        <h1>Build your<br /><em>wardrobe.</em></h1>
+        <p className="intro">
+          One garment. One photo. Plain background. The machine cuts it out and
+          guesses the details — you approve or override every single call.
+        </p>
+
+        <form className="auth-card" onSubmit={onSubmit}>
+          <div>
+            <span className="step-number">01</span>
+            <h2>{authMode === "signin" ? "Access your wardrobe" : "Claim your wardrobe"}</h2>
+            <p>Private by default — your photos never leave your account.</p>
+          </div>
+          <label>
+            Email
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </label>
+          <label>
+            Password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </label>
+          <button className="primary" type="submit">{authMode === "signin" ? "Sign in" : "Create account"}</button>
+          <button className="auth-switch" type="button" onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}>
+            {authMode === "signin" ? "New here? Create account" : "Already have an account? Sign in"}
+          </button>
+        </form>
+        {error && <p className="error" role="alert">{error}</p>}
+        {notice && <p className="success" role="status">{notice}</p>}
+      </section>
+
+      <aside className="side-note" aria-label="Photography guidance">
+        <span className="spark">✣</span>
+        <p><strong>One piece at a time.</strong><br />Front-facing. Sharp. No exceptions.</p>
+      </aside>
+    </main>
+  );
+}
+
+/* --- Home dashboard ---------------------------------------------------------- */
+
+function Home({
+  wardrobeTotal,
+  recent,
+  pendingDraft,
+  onResumeDraft,
+  onDiscardDraft,
+  onAdd,
+  onWardrobe,
+  onPlanner,
+  onOpenGarment,
+}: {
+  wardrobeTotal: number;
+  recent: GarmentCard[];
+  pendingDraft: InProgressGarment | null;
+  onResumeDraft: () => void;
+  onDiscardDraft: () => void;
+  onAdd: () => void;
+  onWardrobe: () => void;
+  onPlanner: () => void;
+  onOpenGarment: (id: string) => void;
+}) {
+  return (
+    <main className="home-shell">
+      <div className="home-greeting">
+        <div className="eyebrow"><span /> Your wardrobe</div>
+        <h1>Good to see<br /><em>you again.</em></h1>
+        <p className="intro">Everything you own, one tap away.</p>
+      </div>
+
+      {pendingDraft && (
+        <aside className="draft-banner">
+          <div>
+            <strong>You started adding a garment</strong>
+            <span>Pick up where you left off, or discard it.</span>
+          </div>
+          <div className="draft-banner-actions">
+            <button className="secondary" onClick={onDiscardDraft}>Discard</button>
+            <button className="primary" onClick={onResumeDraft}>Resume</button>
+          </div>
+        </aside>
+      )}
+
+      <div className="quick-actions">
+        <button className="quick-action" onClick={onAdd}>
+          <span className="icon-badge" aria-hidden="true">+</span>
+          <span>
+            <strong>Add a garment</strong>
+            <span>Snap a photo, we&rsquo;ll take it from there</span>
+          </span>
+        </button>
+        <button className="quick-action" onClick={onWardrobe}>
+          <span className="icon-badge" aria-hidden="true">▦</span>
+          <span>
+            <strong>View wardrobe</strong>
+            <span>{wardrobeTotal} garment{wardrobeTotal === 1 ? "" : "s"} on file</span>
+          </span>
+        </button>
+        <button className="quick-action" onClick={onPlanner}>
+          <span className="icon-badge" aria-hidden="true">◷</span>
+          <span>
+            <strong>Plan the week</strong>
+            <span>Weather-aware outfits, explained</span>
+          </span>
+        </button>
+      </div>
+
+      <div className="home-stats">
+        <div className="home-stat">
+          <strong>{wardrobeTotal}</strong>
+          <span>Garments logged</span>
+        </div>
+        <div className="home-stat">
+          <strong>{wardrobeTotal > 0 ? "Ready" : "Empty"}</strong>
+          <span>Wardrobe status</span>
+        </div>
+      </div>
+
+      {recent.length > 0 && (
+        <div className="home-recent">
+          <h2>Recently added</h2>
+          <div className="recent-strip">
+            {recent.map((item) => (
+              <button key={item.garment_id} onClick={() => onOpenGarment(item.garment_id)} aria-label={`Open ${item.display_name}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={item.original_url} alt={item.display_name} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+/* --- Add-garment flow --------------------------------------------------------
+ * A guided sequence that never traps the user: every step offers Cancel, and
+ * cancelling with unsaved work prompts before discarding it server-side.
+ * Segmentation is only shown for manual review when the model's confidence is
+ * low; otherwise it's accepted automatically and the user never sees it. */
+
+function AddGarmentFlow({
+  token,
+  resumeGarmentId,
+  onExit,
+  onFinished,
+}: {
+  token: string;
+  resumeGarmentId?: string;
+  onExit: () => void;
+  onFinished: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [stage, setStage] = useState<FlowStage>(resumeGarmentId ? "processing" : "idle");
+  const [garmentId, setGarmentId] = useState(resumeGarmentId ?? "");
+  const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [pollCycle, setPollCycle] = useState(0);
+  const [segmentation, setSegmentation] = useState<SegmentationResult | null>(null);
+  const [metadata, setMetadata] = useState<MetadataResult | null>(null);
+  const preview = useMemo(() => (file ? URL.createObjectURL(file) : ""), [file]);
+  const dirty = Boolean(file || garmentId);
+
   function acceptFile(next: File | undefined) {
     setError("");
     if (!next) return;
@@ -107,49 +530,33 @@ export function UploadExperience() {
       return;
     }
     setFile(next);
-    setStage("idle");
   }
 
-  async function signIn(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    if (!supabase) {
-      setError("Add your Supabase settings to .env.local to enable sign-in.");
+  async function discardAndExit() {
+    if (dirty && !window.confirm("Discard this garment and start over? This can't be undone.")) {
       return;
     }
-    const { error: authError } =
-      authMode === "signup"
-        ? await supabase.auth.signUp({ email, password })
-        : await supabase.auth.signInWithPassword({ email, password });
-    if (authError) setError(authError.message);
-    else {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
-        setNotice("Account created. Check your email to confirm it, then return here to sign in.");
-        setAuthMode("signin");
-      } else {
-        setAccessToken(data.session.access_token);
-        setSignedIn(true);
+    if (garmentId) {
+      try {
+        await fetch(`${apiUrl}/api/v1/garments/${garmentId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Best effort — the draft will simply resurface as resumable.
       }
     }
+    onExit();
   }
 
   async function upload() {
-    if (!file || !supabase) return;
+    if (!file) return;
     setStage("uploading");
     setError("");
     try {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) throw new Error("Please sign in before uploading.");
-
       const sessionResponse = await fetch(`${apiUrl}/api/v1/garments/uploads`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: file.name,
           content_type: file.type,
@@ -170,15 +577,12 @@ export function UploadExperience() {
         `${apiUrl}/api/v1/garments/${session.garment_id}/uploads/complete`,
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ object_key: session.object_key }),
         },
       );
       if (!confirmResponse.ok) throw new Error("Could not confirm the upload.");
-      setStage("queued");
+      setStage("processing");
     } catch (caught) {
       setStage("error");
       setError(caught instanceof Error ? caught.message : "Upload failed.");
@@ -186,232 +590,269 @@ export function UploadExperience() {
   }
 
   useEffect(() => {
-    if (stage !== "queued" || !garmentId || !accessToken) return;
+    if (stage !== "processing" || !garmentId) return;
     const timer = window.setInterval(async () => {
       try {
         const statusResponse = await fetch(`${apiUrl}/api/v1/garments/${garmentId}/status`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (!statusResponse.ok) return;
         const current = await statusResponse.json();
         if (current.processing_status === "segmentation_review") {
+          window.clearInterval(timer);
           const resultResponse = await fetch(
             `${apiUrl}/api/v1/garments/${garmentId}/segmentation`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
+            { headers: { Authorization: `Bearer ${token}` } },
           );
-          if (resultResponse.ok) {
-            setSegmentation(await resultResponse.json());
-            window.clearInterval(timer);
+          if (!resultResponse.ok) return;
+          const result: SegmentationResult = await resultResponse.json();
+          if (result.confidence >= SEGMENTATION_AUTO_ACCEPT) {
+            const acceptResponse = await fetch(
+              `${apiUrl}/api/v1/garments/${garmentId}/segmentation/accept`,
+              { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+            );
+            if (acceptResponse.ok) {
+              setPollCycle((value) => value + 1);
+            } else {
+              setSegmentation(result);
+              setStage("segmentation-review");
+            }
+          } else {
+            setSegmentation(result);
+            setStage("segmentation-review");
           }
         } else if (current.processing_status === "metadata_review") {
+          window.clearInterval(timer);
           const resultResponse = await fetch(
             `${apiUrl}/api/v1/garments/${garmentId}/metadata`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
+            { headers: { Authorization: `Bearer ${token}` } },
           );
           if (resultResponse.ok) {
             setMetadata(await resultResponse.json());
-            window.clearInterval(timer);
+            setStage("metadata-confirm");
           }
         } else if (current.processing_status === "failed") {
-          setError(current.error ?? "Garment processing failed.");
-          setStage("error");
           window.clearInterval(timer);
+          setError(current.error ?? "Something went wrong while processing this garment.");
+          setStage("error");
         }
       } catch {
         setError("Temporarily unable to reach the processing service. Retrying…");
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [accessToken, garmentId, pollCycle, stage]);
+  }, [garmentId, pollCycle, stage, token]);
 
-  if (plan) {
-    return <Planner initialPlan={plan} token={accessToken} onBack={() => setPlan(null)} />;
+  async function confirmMetadata(payload: MetadataConfirmPayload) {
+    const response = await fetch(`${apiUrl}/api/v1/garments/${garmentId}/metadata/confirm`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error("We couldn't save those details. Please try again.");
+    onFinished();
   }
 
-  if (wardrobe) {
+  if (stage === "idle" || stage === "uploading") {
     return (
-      <Wardrobe
-        items={wardrobe}
-        token={accessToken}
-        onPlan={setPlan}
-        onAdd={() => {
-          setWardrobe(null);
-          setGarmentId("");
-          setFile(null);
-          setSegmentation(null);
-          setMetadata(null);
-          setError("");
-          setNotice("");
-          setStage("idle");
+      <UploadStep
+        file={file}
+        preview={preview}
+        dragging={dragging}
+        error={error}
+        uploading={stage === "uploading"}
+        onDragOver={(event: DragEvent) => { event.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event: DragEvent) => {
+          event.preventDefault();
+          setDragging(false);
+          acceptFile(event.dataTransfer.files[0]);
         }}
+        onFileChange={(event: ChangeEvent<HTMLInputElement>) => acceptFile(event.target.files?.[0])}
+        onCancel={discardAndExit}
+        onUpload={upload}
       />
     );
   }
 
-  if (metadata) {
-    return (
-      <MetadataReview
-        result={metadata}
-        token={accessToken}
-        onConfirmed={async () => {
-          const response = await fetch(`${apiUrl}/api/v1/garments`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (response.ok) setWardrobe((await response.json()).items);
-          setMetadata(null);
-        }}
-      />
-    );
+  if (stage === "processing") {
+    return <ProcessingStep onCancel={discardAndExit} />;
   }
 
-  if (segmentation) {
+  if (stage === "segmentation-review" && segmentation) {
     return (
       <SegmentationReview
         result={segmentation}
-        token={accessToken}
-        onRetry={() => {
-          setSegmentation(null);
-          setStage("queued");
-          setPollCycle((current) => current + 1);
-        }}
+        token={token}
+        onCancel={discardAndExit}
         onAccepted={() => {
           setSegmentation(null);
-          setStage("queued");
-          setPollCycle((current) => current + 1);
+          setStage("processing");
+          setPollCycle((value) => value + 1);
         }}
-        onReplace={async () => {
-          await fetch(`${apiUrl}/api/v1/garments/${segmentation.garment_id}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
+        onRetry={() => {
           setSegmentation(null);
-          setGarmentId("");
-          setFile(null);
-          setStage("idle");
+          setStage("processing");
+          setPollCycle((value) => value + 1);
         }}
       />
     );
   }
 
+  if (stage === "metadata-confirm" && metadata) {
+    return <QuickMetadataConfirm result={metadata} onConfirm={confirmMetadata} onCancel={discardAndExit} />;
+  }
+
+  if (stage === "error") {
+    return (
+      <ErrorStep
+        message={error}
+        onRetry={() => {
+          setStage("processing");
+          setPollCycle((value) => value + 1);
+        }}
+        onCancel={discardAndExit}
+      />
+    );
+  }
+
+  return null;
+}
+
+function FlowNav({ label, onCancel }: { label: string; onCancel: () => void }) {
+  return (
+    <nav className="nav" aria-label="Primary navigation">
+      <button className="brand nav-link" onClick={onCancel} aria-label="Cancel and return home">
+        <span className="brand-mark" aria-hidden="true">P</span>
+        <span>PetDressed</span>
+      </button>
+      <div className="nav-steps"><button className="active" disabled>{label}</button></div>
+      <button className="round-button" aria-label="Cancel and return home" onClick={onCancel}>✕</button>
+    </nav>
+  );
+}
+
+function UploadStep({
+  file,
+  preview,
+  dragging,
+  error,
+  uploading,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onFileChange,
+  onCancel,
+  onUpload,
+}: {
+  file: File | null;
+  preview: string;
+  dragging: boolean;
+  error: string;
+  uploading: boolean;
+  onDragOver: (event: DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (event: DragEvent) => void;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onCancel: () => void;
+  onUpload: () => void;
+}) {
   return (
     <main>
-      <nav className="nav" aria-label="Primary navigation">
-        <a className="brand" href="#" aria-label="PetDressed home">
-          <span className="brand-mark" aria-hidden="true">P</span>
-          <span>PetDressed</span>
-        </a>
-        <div className="nav-steps" aria-label="Wardrobe setup progress">
-          <span className="active">1 · Add item</span>
-          <span>2 · Tidy photo</span>
-          <span>3 · Describe</span>
-        </div>
-        <button className="round-button" aria-label="Open help">?</button>
-      </nav>
-
+      <FlowNav label="Add item" onCancel={onCancel} />
       <section className="hero">
         <ClothingRail className="hero-rail" />
-        <div className="eyebrow"><span /> 01 // Intake</div>
-        <h1>Build your<br /><em>wardrobe.</em></h1>
+        <div className="eyebrow"><span /> Add a garment</div>
+        <h1>One photo.<br /><em>That&rsquo;s it.</em></h1>
         <p className="intro">
-          One garment. One photo. Plain background. The machine cuts it out and
-          guesses the details — you approve or override every single call.
+          Plain background, whole piece in frame. We&rsquo;ll cut it out and fill in
+          the details automatically — you can fix anything after.
         </p>
 
-        {!signedIn ? (
-          <form className="auth-card" onSubmit={signIn}>
-            <div>
-              <span className="step-number">01</span>
-              <h2>{authMode === "signin" ? "Access your wardrobe" : "Claim your wardrobe"}</h2>
-              <p>Private by default — your photos never leave your account.</p>
-            </div>
-            <label>
-              Email
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </label>
-            <label>
-              Password
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </label>
-            <button className="primary" type="submit">{authMode === "signin" ? "Sign in" : "Create account"}</button>
-            <button className="auth-switch" type="button" onClick={() => setAuthMode((mode) => mode === "signin" ? "signup" : "signin")}>
-              {authMode === "signin" ? "New here? Create account" : "Already have an account? Sign in"}
-            </button>
-          </form>
-        ) : (
-          <section className="upload-card">
-            <div className="upload-heading">
-              <div>
-                <span className="step-number">01</span>
-                <h2>Feed it a garment</h2>
-              </div>
-              <span className="private-note">Private</span>
-            </div>
+        <section className="upload-card">
+          <div className="upload-heading">
+            <div><span className="step-number">1</span><h2>Add the photo</h2></div>
+            <span className="private-note">Private</span>
+          </div>
 
-            <div
-              className={`dropzone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""}`}
-              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(event: DragEvent) => {
-                event.preventDefault();
-                setDragging(false);
-                acceptFile(event.dataTransfer.files[0]);
-              }}
-            >
-              {file ? (
-                <>
-                  <Image
-                    src={preview}
-                    alt={`Preview of ${file.name}`}
-                    width={180}
-                    height={190}
-                    unoptimized
-                  />
-                  <div>
-                    <strong>{file.name}</strong>
-                    <span>{(file.size / 1024 / 1024).toFixed(1)} MB · Locked and loaded</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <HangingGarment className="hanger" />
-                  <strong>Drop the photo here</strong>
-                  <span>or pull one from your device</span>
-                </>
-              )}
-              <label className="file-button">
-                {file ? "Choose another" : "Choose photo"}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => acceptFile(event.target.files?.[0])}
-                />
-              </label>
-            </div>
-
-            <div className="tips">
-              <strong>Rules of engagement</strong>
-              <span>Lay it flat. Show the whole piece. Use a background that fights it.</span>
-            </div>
-            {error && <p className="error" role="alert">{error}</p>}
-            {notice && <p className="success" role="status">{notice}</p>}
-            {stage === "queued" ? (
-              <div className="success" role="status">
-                <strong>Photo received.</strong>
-                <span className="processing-line"><i /> Stripping the background…</span>
-              </div>
+          <div
+            className={`dropzone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""}`}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
+            {file ? (
+              <>
+                <Image src={preview} alt={`Preview of ${file.name}`} width={180} height={190} unoptimized />
+                <div>
+                  <strong>{file.name}</strong>
+                  <span>{(file.size / 1024 / 1024).toFixed(1)} MB · Ready</span>
+                </div>
+              </>
             ) : (
-              <button className="primary full" disabled={!file || stage === "uploading"} onClick={upload}>
-                {stage === "uploading" ? "Uploading…" : "Send it →"}
-              </button>
+              <>
+                <HangingGarment className="hanger" />
+                <strong>Drop the photo here</strong>
+                <span>or pull one from your device</span>
+              </>
             )}
-          </section>
-        )}
-      </section>
+            <label className="file-button">
+              {file ? "Choose another" : "Choose photo"}
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onFileChange} />
+            </label>
+          </div>
 
-      <aside className="side-note" aria-label="Photography guidance">
-        <span className="spark">✣</span>
-        <p><strong>One piece at a time.</strong><br />Front-facing. Sharp. No exceptions.</p>
-      </aside>
+          <div className="tips">
+            <strong>For best results</strong>
+            <span>Lay it flat, show the whole piece, use a background that contrasts.</span>
+          </div>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="primary full" disabled={!file || uploading} onClick={onUpload}>
+            {uploading ? "Uploading…" : "Continue →"}
+          </button>
+          <button className="secondary full" type="button" onClick={onCancel}>Cancel</button>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function ProcessingStep({ onCancel }: { onCancel: () => void }) {
+  return (
+    <main>
+      <FlowNav label="Preparing" onCancel={onCancel} />
+      <section className="hero">
+        <div className="eyebrow"><span /> Working</div>
+        <h1>Tidying up<br /><em>your photo.</em></h1>
+        <div className="success" role="status">
+          <strong>Almost there.</strong>
+          <span className="processing-line"><i /> Removing the background and identifying the piece…</span>
+        </div>
+        <button className="secondary full" onClick={onCancel}>Cancel</button>
+      </section>
+    </main>
+  );
+}
+
+function ErrorStep({
+  message,
+  onRetry,
+  onCancel,
+}: {
+  message: string;
+  onRetry: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <main>
+      <FlowNav label="Trouble" onCancel={onCancel} />
+      <section className="hero">
+        <div className="eyebrow"><span /> Trouble ahead</div>
+        <h1>That didn&rsquo;t<br /><em>quite work.</em></h1>
+        <p className="error" role="alert">{message}</p>
+        <button className="primary full" onClick={onRetry}>Try again</button>
+        <button className="secondary full" onClick={onCancel}>Cancel</button>
+      </section>
     </main>
   );
 }
@@ -421,13 +862,13 @@ function SegmentationReview({
   token,
   onRetry,
   onAccepted,
-  onReplace,
+  onCancel,
 }: {
   result: SegmentationResult;
   token: string;
   onRetry: () => void;
   onAccepted: () => void;
-  onReplace: () => void;
+  onCancel: () => void;
 }) {
   const imageRef = useRef<HTMLImageElement>(null);
   const [tool, setTool] = useState<Tool>("keep");
@@ -511,18 +952,16 @@ function SegmentationReview({
 
   return (
     <main>
-      <nav className="nav" aria-label="Primary navigation">
-        <a className="brand" href="#"><span className="brand-mark">P</span><span>PetDressed</span></a>
-        <div className="nav-steps">
-          <span>1 · Add item</span><span className="active">2 · Tidy photo</span><span>3 · Describe</span>
-        </div>
-        <button className="round-button" aria-label="Open help">?</button>
-      </nav>
+      <FlowNav label="Quick check" onCancel={onCancel} />
       <section className="review-shell">
         <div className="review-copy">
-          <div className="eyebrow"><span /> 02 // Verify</div>
+          <div className="eyebrow"><span /> A quick check</div>
           <h1>Check the<br /><em>cut.</em></h1>
-          <p className="intro">Brush back anything the machine ate. Scrub out any background that survived. Your call is final.</p>
+          <p className="intro">
+            We weren&rsquo;t fully confident here, so give it a look. Brush back
+            anything the machine ate, or scrub out any background that
+            survived.
+          </p>
           <div className="toolbox" aria-label="Mask correction tools">
             <button className={tool === "keep" ? "selected" : ""} onClick={() => setTool("keep")}>＋ Keep</button>
             <button className={tool === "remove" ? "selected" : ""} onClick={() => setTool("remove")}>− Remove</button>
@@ -571,7 +1010,7 @@ function SegmentationReview({
             ))}
           </div>
           <div className="review-actions">
-            <button className="secondary" disabled={busy} onClick={onReplace}>
+            <button className="secondary" disabled={busy} onClick={onCancel}>
               Scrap it
             </button>
             <button className="secondary" disabled={busy} onClick={retry}>
@@ -585,31 +1024,37 @@ function SegmentationReview({
   );
 }
 
-function MetadataReview({
+function QuickMetadataConfirm({
   result,
-  token,
-  onConfirmed,
+  onConfirm,
+  onCancel,
 }: {
   result: MetadataResult;
-  token: string;
-  onConfirmed: () => void;
+  onConfirm: (payload: MetadataConfirmPayload) => Promise<void>;
+  onCancel: () => void;
 }) {
   const [name, setName] = useState(result.display_name ?? "");
   const [category, setCategory] = useState(result.predicted_category);
   const [subcategory, setSubcategory] = useState(result.subcategory ?? "");
-  const [formality, setFormality] = useState(result.formality);
-  const [warmth, setWarmth] = useState(result.warmth);
-  const [breathability, setBreathability] = useState(result.breathability);
-  const [waterResistance, setWaterResistance] = useState(result.water_resistance);
   const [pattern, setPattern] = useState(result.pattern);
   const [plannerEnabled, setPlannerEnabled] = useState(
     !result.degraded && result.category_confidence >= 0.45,
   );
-  const [seasons, setSeasons] = useState(result.seasons);
+  const [seasons, setSeasons] = useState<Record<(typeof SEASONS)[number], boolean>>(() => {
+    const initial = {} as Record<(typeof SEASONS)[number], boolean>;
+    SEASONS.forEach((season) => {
+      initial[season] = (result.seasons[season] ?? 0) >= 3;
+    });
+    return initial;
+  });
+  const [formality, setFormality] = useState(result.formality);
+  const [warmth, setWarmth] = useState(result.warmth);
+  const [breathability, setBreathability] = useState(result.breathability);
+  const [waterResistance, setWaterResistance] = useState(result.water_resistance);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  async function confirm(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     if (plannerEnabled && !subcategory.trim()) {
       setError("Add a garment type before including this piece in outfit planning.");
@@ -617,33 +1062,32 @@ function MetadataReview({
     }
     setBusy(true);
     setError("");
-    const response = await fetch(
-      `${apiUrl}/api/v1/garments/${result.garment_id}/metadata/confirm`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          display_name: name,
-          category,
-          subcategory: subcategory || null,
-          formality,
-          warmth,
-          breathability,
-          water_resistance: waterResistance,
-          pattern,
-          planner_enabled: plannerEnabled,
-          seasons,
-        }),
-      },
-    );
-    setBusy(false);
-    if (response.ok) onConfirmed();
-    else setError("We couldn’t save those details. Please try again.");
+    const seasonScores = SEASONS.reduce((acc, season) => {
+      acc[season] = seasons[season] ? 5 : 0;
+      return acc;
+    }, {} as SeasonScores);
+    try {
+      await onConfirm({
+        display_name: name || "Unnamed garment",
+        category,
+        subcategory: subcategory || null,
+        formality,
+        warmth,
+        breathability,
+        water_resistance: waterResistance,
+        pattern,
+        planner_enabled: plannerEnabled,
+        seasons: seasonScores,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "We couldn't save those details. Please try again.");
+      setBusy(false);
+    }
   }
 
   return (
     <main>
-      <AppNav active={3} />
+      <FlowNav label="Name it" onCancel={onCancel} />
       <section className="metadata-shell">
         <div className="metadata-image">
           <GarmentIcon name={iconForCategory(category)} className="photo-ghost" />
@@ -655,49 +1099,77 @@ function MetadataReview({
             ))}
           </div>
         </div>
-        <form className="metadata-form" onSubmit={confirm}>
-          <div className="eyebrow"><span /> 03 // Label</div>
-          <h1>Name the<br /><em>evidence.</em></h1>
-          <p className="confidence-note">
-            {result.degraded ? "Needs your input" : "Guessed from the photo"} ·{" "}
-            {Math.round(result.category_confidence * 100)}% category confidence ·{" "}
-            {result.inference_backend}
-          </p>
-          {result.degraded && (
+        <form className="metadata-form" onSubmit={submit}>
+          <div className="eyebrow"><span /> Last step</div>
+          <h1>Does this<br /><em>look right?</em></h1>
+          {result.degraded ? (
             <p className="error" role="alert">
-              Semantic classification is unavailable. Choose the category and type before enabling
-              outfit planning.
+              We couldn&rsquo;t automatically identify this piece. Fill in the category and type below.
+            </p>
+          ) : (
+            <p className="confidence-note">
+              Matched with {Math.round(result.category_confidence * 100)}% confidence — change anything that&rsquo;s off.
             </p>
           )}
           <div className="form-grid">
-            <label className="wide">Garment name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Navy everyday shirt" required /></label>
-            <label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>
-              {["top","bottom","one_piece","outerwear","shoes","accessory"].map((value) => <option key={value} value={value}>{value.replace("_", " ")}</option>)}
-            </select></label>
-            <label>Type<input value={subcategory} onChange={(event) => setSubcategory(event.target.value)} /></label>
-            <AttributeSlider label="Formality" value={formality} setValue={setFormality} low="Relaxed" high="Formal" />
-            <AttributeSlider label="Warmth" value={warmth} setValue={setWarmth} low="Light" high="Toasty" />
-            <AttributeSlider label="Breathability" value={breathability} setValue={setBreathability} low="Low" high="Airy" />
-            <AttributeSlider label="Water resistance" value={waterResistance} setValue={setWaterResistance} low="None" high="Rain-ready" />
-            <label>Pattern<select value={pattern} onChange={(event) => setPattern(event.target.value)}>
-              {["solid","striped","checked","graphic","floral","abstract","textured","other","unknown"].map((value) => <option key={value}>{value}</option>)}
-            </select></label>
-            <label className="planner-toggle"><input type="checkbox" checked={plannerEnabled} onChange={(event) => setPlannerEnabled(event.target.checked)} /> Include in outfit planning</label>
-            <div className="season-grid wide">
-              {(["spring", "summer", "fall", "winter"] as const).map((season) => (
-                <AttributeSlider
-                  key={season}
-                  label={season[0].toUpperCase() + season.slice(1)}
-                  value={seasons[season]}
-                  setValue={(next) => setSeasons({ ...seasons, [season]: next })}
-                  low="Skip"
-                  high="Ideal"
-                />
-              ))}
+            <label className="wide">
+              Garment name
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Navy everyday shirt" required />
+            </label>
+            <label>
+              Category
+              <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                {["top", "bottom", "one_piece", "outerwear", "shoes", "accessory"].map((value) => (
+                  <option key={value} value={value}>{value.replace("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Type
+              <input value={subcategory} onChange={(e) => setSubcategory(e.target.value)} placeholder="e.g. T-shirt" />
+            </label>
+            <label>
+              Pattern
+              <select value={pattern} onChange={(e) => setPattern(e.target.value)}>
+                {["solid", "striped", "checked", "graphic", "floral", "abstract", "textured", "other", "unknown"].map((value) => (
+                  <option key={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+            <label className="planner-toggle">
+              <input type="checkbox" checked={plannerEnabled} onChange={(e) => setPlannerEnabled(e.target.checked)} />
+              Include in outfit planning
+            </label>
+            <div className="wide">
+              <span className="field-label">Seasons</span>
+              <div className="season-chips">
+                {SEASONS.map((season) => (
+                  <label key={season} className={`season-chip ${seasons[season] ? "checked" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={seasons[season]}
+                      onChange={(e) => setSeasons({ ...seasons, [season]: e.target.checked })}
+                    />
+                    {season[0].toUpperCase() + season.slice(1)}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
+
+          <details className="advanced-disclosure">
+            <summary>Fine-tune planning details (optional)</summary>
+            <div className="season-grid">
+              <AttributeSlider label="Formality" value={formality} setValue={setFormality} low="Relaxed" high="Formal" />
+              <AttributeSlider label="Warmth" value={warmth} setValue={setWarmth} low="Light" high="Toasty" />
+              <AttributeSlider label="Breathability" value={breathability} setValue={setBreathability} low="Low" high="Airy" />
+              <AttributeSlider label="Water resistance" value={waterResistance} setValue={setWaterResistance} low="None" high="Rain-ready" />
+            </div>
+          </details>
+
           {error && <p className="error" role="alert">{error}</p>}
-          <button className="primary full" disabled={busy}>{busy ? "Saving…" : "Commit to wardrobe →"}</button>
+          <button className="primary full" disabled={busy}>{busy ? "Saving…" : "Add to wardrobe →"}</button>
+          <button className="secondary full" type="button" onClick={onCancel}>Cancel</button>
         </form>
       </section>
     </main>
@@ -714,35 +1186,22 @@ function AttributeSlider({ label, value, setValue, low, high }: { label: string;
   );
 }
 
-function AppNav({ active = 1, onSettings }: { active?: number; onSettings?: () => void }) {
-  return (
-    <nav className="nav" aria-label="Primary navigation">
-      <a className="brand" href="#"><span className="brand-mark">P</span><span>PetDressed</span></a>
-      <div className="nav-steps"><span className={active === 1 ? "active" : ""}>Wardrobe</span><span className={active === 2 ? "active" : ""}>Planner</span><span className={active === 3 ? "active" : ""}>Add item</span></div>
-      <button className="round-button" aria-label="Open settings" onClick={onSettings}>⚙</button>
-    </nav>
-  );
-}
+/* --- Wardrobe ----------------------------------------------------------------- */
 
 function Wardrobe({
   items,
   token,
-  onPlan,
-  onAdd,
+  onOpenDetail,
 }: {
   items: GarmentCard[];
   token: string;
-  onPlan: (plan: OutfitPlan) => void;
-  onAdd: () => void;
+  onOpenDetail: (id: string) => void;
 }) {
   const [garments, setGarments] = useState(items);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [season, setSeason] = useState("all");
-  const [planning, setPlanning] = useState(false);
-  const [planError, setPlanError] = useState("");
   const [wardrobeError, setWardrobeError] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
 
   async function updateAvailability(item: GarmentCard, availability: string) {
     const response = await fetch(`${apiUrl}/api/v1/garments/${item.garment_id}`, {
@@ -762,43 +1221,10 @@ function Wardrobe({
       item.display_name.toLowerCase().includes(query.toLowerCase()),
   );
 
-  async function generatePlan() {
-    setPlanning(true);
-    setPlanError("");
-    const start = new Date();
-    start.setDate(start.getDate() + 1);
-    const settingsResponse = await fetch(`${apiUrl}/api/v1/settings`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const settings = settingsResponse.ok ? await settingsResponse.json() : null;
-    const response = await fetch(`${apiUrl}/api/v1/plans/generate`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        start_date: start.toISOString().slice(0, 10),
-        days: 7,
-        location: {
-          latitude: settings?.latitude ?? 43.6532,
-          longitude: settings?.longitude ?? -79.3832,
-          timezone: settings?.timezone ?? "America/Toronto",
-        },
-        daily_requirements: [],
-        locked_items: [],
-        excluded_items: [],
-      }),
-    });
-    setPlanning(false);
-    if (response.ok) onPlan(await response.json());
-    else {
-      const body = await response.json().catch(() => null);
-      setPlanError(body?.detail?.message ?? body?.detail ?? "We couldn’t build a complete week yet.");
-    }
-  }
-
   async function changeSeason(next: string) {
     setSeason(next);
-    const query = next === "all" ? "" : `?season=${next}`;
-    const response = await fetch(`${apiUrl}/api/v1/garments${query}`, {
+    const seasonQuery = next === "all" ? "" : `?season=${next}`;
+    const response = await fetch(`${apiUrl}/api/v1/garments${seasonQuery}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (response.ok) setGarments((await response.json()).items);
@@ -824,35 +1250,21 @@ function Wardrobe({
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) throw new Error(`Delete failed with status ${response.status}`);
-      setGarments((current) =>
-        current.filter((garment) => garment.garment_id !== item.garment_id),
-      );
+      setGarments((current) => current.filter((garment) => garment.garment_id !== item.garment_id));
     } catch {
-      setWardrobeError("We couldn’t remove that piece. Check the API connection and try again.");
+      setWardrobeError("We couldn't remove that piece. Check the API connection and try again.");
     }
-  }
-
-  if (showSettings) {
-    return <Settings token={token} onBack={() => setShowSettings(false)} />;
   }
 
   return (
     <main className="wardrobe-page">
-      <AppNav active={1} onSettings={() => setShowSettings(true)} />
       <section className="wardrobe-header">
-        <div><div className="eyebrow"><span /> The archive</div><h1>Every piece<br /><em>on file.</em></h1></div>
-        <div className="header-actions">
-          <button className="secondary" onClick={onAdd}>＋ Add piece</button>
-          <button className="primary" onClick={generatePlan} disabled={planning}>
-            {planning ? "Solving…" : "Plan the week →"}
-          </button>
-        </div>
+        <div><div className="eyebrow"><span /> Your collection</div><h1>A wardrobe that<br /><em>works together.</em></h1></div>
       </section>
-      {planError && <p className="plan-error error" role="alert">{String(planError)}</p>}
       <section className="wardrobe-controls">
         <label className="search-field"><span>Search</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try “navy shirt”" /></label>
         <div className="category-pills">
-          {["all","top","bottom","one_piece","outerwear","shoes","accessory"].map((value) => (
+          {["all", "top", "bottom", "one_piece", "outerwear", "shoes", "accessory"].map((value) => (
             <button key={value} className={category === value ? "selected" : ""} onClick={() => setCategory(value)}>
               {value !== "all" && <GarmentIcon name={iconForCategory(value)} className="pill-icon" />}
               {value.replace("_", " ")}
@@ -877,9 +1289,6 @@ function Wardrobe({
                 {/* Silhouette sits behind the photo so a slow or broken image
                     still reads as the right kind of garment. */}
                 <GarmentIcon name={iconForCategory(item.category)} className="photo-ghost" />
-                {/* The uploaded photo, not the cutout: segmentation crops to the
-                    mask bounding box, and a poor mask makes the item harder to
-                    recognise than the original ever was. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img className="photo-original" src={item.original_url} alt={item.display_name} />
                 {item.availability !== "available" && <span className="state-badge">{item.availability}</span>}
@@ -893,6 +1302,7 @@ function Wardrobe({
               </select>
               <div className="card-actions">
                 <button onClick={() => markWorn(item)}>Wore today</button>
+                <button onClick={() => onOpenDetail(item.garment_id)}>Details</button>
                 <button onClick={() => removeGarment(item)}>Remove</button>
               </div>
             </article>
@@ -902,12 +1312,181 @@ function Wardrobe({
         <div className="empty-state">
           <ClothingRail className="empty-rail" count={4} />
           <strong>Nothing matches.</strong>
-          <span>Drop a filter or feed it a garment.</span>
+          <span>Drop a filter or add a garment.</span>
         </div>
       )}
     </main>
   );
 }
+
+/* --- Garment detail (advanced settings live here, not at creation) ----------- */
+
+function GarmentDetailPage({
+  garmentId,
+  token,
+  onBack,
+  onRemoved,
+}: {
+  garmentId: string;
+  token: string;
+  onBack: () => void;
+  onRemoved: () => void;
+}) {
+  const [detail, setDetail] = useState<GarmentDetail | null>(null);
+  const [name, setName] = useState("");
+  const [subcategory, setSubcategory] = useState("");
+  const [pattern, setPattern] = useState("solid");
+  const [plannerEnabled, setPlannerEnabled] = useState(false);
+  const [formality, setFormality] = useState(0);
+  const [warmth, setWarmth] = useState(0);
+  const [breathability, setBreathability] = useState(0);
+  const [waterResistance, setWaterResistance] = useState(0);
+  const [seasons, setSeasons] = useState<SeasonScores>({ spring: 0, summer: 0, fall: 0, winter: 0 });
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${apiUrl}/api/v1/garments/${garmentId}/detail`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load this garment.");
+        return response.json();
+      })
+      .then((data: GarmentDetail) => {
+        if (!active) return;
+        setDetail(data);
+        setName(data.display_name);
+        setSubcategory(data.subcategory ?? "");
+        setPattern(data.pattern ?? "solid");
+        setPlannerEnabled(data.planner_enabled);
+        setFormality(data.formality);
+        setWarmth(data.warmth);
+        setBreathability(data.breathability);
+        setWaterResistance(data.water_resistance);
+        setSeasons(data.seasons);
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not load this garment."));
+    return () => {
+      active = false;
+    };
+  }, [garmentId, token]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    const payload: GarmentUpdatePayload = {
+      display_name: name,
+      subcategory: subcategory || null,
+      pattern,
+      planner_enabled: plannerEnabled,
+      formality,
+      warmth,
+      breathability,
+      water_resistance: waterResistance,
+      seasons,
+    };
+    const response = await fetch(`${apiUrl}/api/v1/garments/${garmentId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    setBusy(false);
+    if (response.ok) setSaved(true);
+    else setError("We couldn't save those changes. Please try again.");
+  }
+
+  async function remove() {
+    if (!detail || !window.confirm(`Remove ${detail.display_name} and its photos?`)) return;
+    const response = await fetch(`${apiUrl}/api/v1/garments/${garmentId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.ok) onRemoved();
+    else setError("We couldn't remove that piece. Try again.");
+  }
+
+  if (!detail) {
+    return (
+      <main className="detail-shell">
+        <div className="empty-state">
+          {error ? <p className="error" role="alert">{error}</p> : <span>Loading…</span>}
+          <button className="secondary" onClick={onBack}>← Wardrobe</button>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="detail-shell">
+      <div className="detail-image">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={detail.original_url} alt={detail.display_name} />
+      </div>
+      <form onSubmit={save}>
+        <button className="back-link" type="button" onClick={onBack}>← Wardrobe</button>
+        <div className="eyebrow"><span /> Garment details</div>
+        <h1>{detail.display_name}</h1>
+        <div className="form-grid">
+          <label className="wide">
+            Garment name
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
+          </label>
+          <label>
+            Category
+            <input value={detail.category.replace("_", " ")} disabled />
+          </label>
+          <label>
+            Type
+            <input value={subcategory} onChange={(e) => setSubcategory(e.target.value)} />
+          </label>
+          <label>
+            Pattern
+            <select value={pattern} onChange={(e) => setPattern(e.target.value)}>
+              {["solid", "striped", "checked", "graphic", "floral", "abstract", "textured", "other", "unknown"].map((value) => (
+                <option key={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <label className="planner-toggle">
+            <input type="checkbox" checked={plannerEnabled} onChange={(e) => setPlannerEnabled(e.target.checked)} />
+            Include in outfit planning
+          </label>
+        </div>
+
+        <details className="advanced-disclosure">
+          <summary>Advanced planning details</summary>
+          <div className="season-grid">
+            <AttributeSlider label="Formality" value={formality} setValue={setFormality} low="Relaxed" high="Formal" />
+            <AttributeSlider label="Warmth" value={warmth} setValue={setWarmth} low="Light" high="Toasty" />
+            <AttributeSlider label="Breathability" value={breathability} setValue={setBreathability} low="Low" high="Airy" />
+            <AttributeSlider label="Water resistance" value={waterResistance} setValue={setWaterResistance} low="None" high="Rain-ready" />
+            {SEASONS.map((season) => (
+              <AttributeSlider
+                key={season}
+                label={season[0].toUpperCase() + season.slice(1)}
+                value={seasons[season]}
+                setValue={(next) => setSeasons({ ...seasons, [season]: next })}
+                low="Skip"
+                high="Ideal"
+              />
+            ))}
+          </div>
+        </details>
+
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="detail-actions">
+          <button className="primary" disabled={busy}>{busy ? "Saving…" : saved ? "Saved ✓" : "Save changes"}</button>
+          <button className="secondary" type="button" onClick={remove}>Remove garment</button>
+        </div>
+      </form>
+    </main>
+  );
+}
+
+/* --- Settings ------------------------------------------------------------------ */
 
 interface SettingsValue {
   city: string | null;
@@ -946,13 +1525,12 @@ function Settings({ token, onBack }: { token: string; onBack: () => void }) {
     }
   }
 
-  if (!value) return <main><AppNav /><div className="empty-state">Loading settings…</div></main>;
+  if (!value) return <main><div className="empty-state">Loading settings…</div></main>;
   return (
     <main>
-      <AppNav active={0} />
       <form className="settings-panel" onSubmit={save}>
         <button className="back-link" type="button" onClick={onBack}>← Wardrobe</button>
-        <div className="eyebrow"><span /> Parameters</div>
+        <div className="eyebrow"><span /> Make it yours</div>
         <h1>Set the<br /><em>constraints.</em></h1>
         <p className="intro">Your approximate location feeds the forecast. Nothing else uses it.</p>
         <div className="form-grid">
@@ -973,7 +1551,53 @@ function Settings({ token, onBack }: { token: string; onBack: () => void }) {
   );
 }
 
-function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; token: string; onBack: () => void }) {
+/* --- Planner --------------------------------------------------------------------- */
+
+function PlannerHost({
+  plan,
+  planning,
+  planError,
+  token,
+  onGenerate,
+}: {
+  plan: OutfitPlan | null;
+  planning: boolean;
+  planError: string;
+  token: string;
+  onGenerate: () => void;
+}) {
+  if (planning) {
+    return (
+      <main className="hero">
+        <div className="eyebrow"><span /> Solving</div>
+        <h1>Building your<br /><em>week.</em></h1>
+        <div className="success" role="status">
+          <strong>Crunching the details…</strong>
+          <span className="processing-line"><i /> Matching weather, rotation, and your rules…</span>
+        </div>
+      </main>
+    );
+  }
+
+  if (!plan) {
+    return (
+      <main className="hero">
+        <div className="eyebrow"><span /> Outfit planner</div>
+        <h1>Plan your<br /><em>week.</em></h1>
+        <p className="intro">
+          We&rsquo;ll pick a full outfit for each day based on the weather and
+          what you actually have available to wear.
+        </p>
+        {planError && <p className="error" role="alert">{planError}</p>}
+        <button className="primary full" onClick={onGenerate}>Plan the week →</button>
+      </main>
+    );
+  }
+
+  return <Planner initialPlan={plan} token={token} />;
+}
+
+function Planner({ initialPlan, token }: { initialPlan: OutfitPlan; token: string }) {
   const [plan, setPlan] = useState(initialPlan);
   const [busyDay, setBusyDay] = useState("");
   const [selectedDay, setSelectedDay] = useState(initialPlan.days[0]?.date ?? "");
@@ -992,9 +1616,7 @@ function Planner({ initialPlan, token, onBack }: { initialPlan: OutfitPlan; toke
   const active = plan.days.find((day) => day.date === selectedDay) ?? plan.days[0];
   return (
     <main className="planner-page">
-      <AppNav active={2} />
       <section className="planner-header">
-        <button className="back-link" onClick={onBack}>← Wardrobe</button>
         <div>
           <div className="eyebrow"><span /> Solved</div>
           <h1>Seven days.<br /><em>Zero guesswork.</em></h1>

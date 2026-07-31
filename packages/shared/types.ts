@@ -164,6 +164,41 @@ export interface WardrobePage {
   total: number;
 }
 
+/** `GarmentDetailResponse` — the full record behind a wardrobe tile, including planner-only fields. */
+export interface GarmentDetail {
+  garment_id: string;
+  display_name: string;
+  category: string;
+  subcategory: string | null;
+  availability: string;
+  planner_enabled: boolean;
+  wear_count: number;
+  last_worn_at: string | null;
+  colors: Color[];
+  pattern: string | null;
+  image_url: string;
+  original_url: string;
+  formality: number;
+  warmth: number;
+  breathability: number;
+  water_resistance: number;
+  seasons: SeasonScores;
+}
+
+/** `GarmentUpdateRequest`. Every field is optional; only send what changed. */
+export interface GarmentUpdatePayload {
+  display_name?: string;
+  availability?: Availability | "archived";
+  planner_enabled?: boolean;
+  subcategory?: string | null;
+  pattern?: string;
+  formality?: number;
+  warmth?: number;
+  breathability?: number;
+  water_resistance?: number;
+  seasons?: SeasonScores;
+}
+
 /** `ScoreBreakdownResponse` — why the solver chose an outfit. */
 export interface ScoreBreakdown {
   weather: number;

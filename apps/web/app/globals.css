@@ -209,10 +209,35 @@ h2 {
   color: #8d8d84;
 }
 
-.nav-steps .active {
+.nav-steps button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 2px;
+  font: inherit;
+  letter-spacing: inherit;
+  font-size: inherit;
+  text-transform: inherit;
+  min-height: var(--tap);
+}
+
+.nav-steps button:hover {
+  color: var(--acid);
+}
+
+.nav-steps .active,
+.nav-steps button.active {
   color: var(--acid);
   text-decoration: underline;
   text-underline-offset: 4px;
+}
+
+.brand.nav-link {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
 }
 
 .round-button {
@@ -592,6 +617,273 @@ h2 {
   padding: 0 16px;
   text-transform: uppercase;
   color: var(--steel);
+}
+
+/* --- Home dashboard -------------------------------------------------------- */
+
+.home-shell {
+  display: grid;
+  gap: 20px;
+  padding: 22px 16px 70px;
+}
+
+.home-greeting h1 {
+  margin: 6px 0 4px;
+}
+
+.draft-banner {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: var(--border) solid var(--ink);
+  background: var(--acid);
+}
+
+.draft-banner strong {
+  display: block;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+.draft-banner span {
+  display: block;
+  font-size: 11px;
+  color: var(--ink);
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.draft-banner-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.quick-action {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 76px;
+  padding: 14px;
+  background: var(--panel);
+  border: var(--border) solid var(--ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.1s steps(2), box-shadow 0.1s steps(2), background 0.12s steps(2);
+}
+
+.quick-action:hover {
+  background: var(--acid);
+}
+
+.quick-action:active {
+  transform: translate(5px, 5px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+.quick-action .icon-badge {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: var(--ink);
+  color: var(--acid);
+  font-size: 20px;
+}
+
+.quick-action strong {
+  display: block;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.quick-action span {
+  display: block;
+  font-size: 11px;
+  color: var(--steel);
+  margin-top: 2px;
+}
+
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.home-stat {
+  padding: 14px;
+  border: var(--border) solid var(--ink);
+  background: var(--panel);
+}
+
+.home-stat strong {
+  display: block;
+  font-family: var(--font-display), sans-serif;
+  font-size: 28px;
+}
+
+.home-stat span {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--steel);
+}
+
+.home-recent h2 {
+  margin-bottom: 10px;
+}
+
+.recent-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.recent-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.recent-strip button {
+  flex: 0 0 100px;
+  border: var(--border) solid var(--ink);
+  background: var(--panel);
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+}
+
+.recent-strip img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  display: block;
+}
+
+/* --- Quick metadata confirm ------------------------------------------------ */
+
+.field-label {
+  display: block;
+  margin: 4px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.season-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.season-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  padding: 8px 14px;
+  border: var(--border) solid var(--ink);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.season-chip input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--ink);
+}
+
+.season-chip.checked {
+  background: var(--acid);
+}
+
+.advanced-disclosure {
+  margin-top: 4px;
+  border: var(--border) solid var(--ink);
+  background: var(--paper);
+}
+
+.advanced-disclosure summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  list-style: none;
+}
+
+.advanced-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-disclosure summary::before {
+  content: "+ ";
+}
+
+.advanced-disclosure[open] summary::before {
+  content: "− ";
+}
+
+.advanced-disclosure .form-grid,
+.advanced-disclosure .season-grid {
+  padding: 0 14px 14px;
+  margin: 0;
+}
+
+.auto-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--paper);
+  border-left: 6px solid var(--acid);
+  font-size: 11px;
+  color: var(--steel);
+  text-transform: uppercase;
+}
+
+/* --- Garment detail page --------------------------------------------------- */
+
+.detail-shell {
+  display: grid;
+  gap: 20px;
+  padding: 22px 16px 70px;
+}
+
+.detail-image {
+  position: relative;
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  background: var(--concrete);
+  border: var(--border) solid var(--ink);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.detail-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 /* --- Side note ----------------------------------------------------------- */
@@ -1525,6 +1817,39 @@ h2 {
 
   .side-note .spark {
     font-size: 18px;
+  }
+
+  .home-shell {
+    width: min(1100px, 92vw);
+    margin: 0 auto;
+    padding: 46px 0 90px;
+    grid-template-columns: 1.3fr 0.9fr;
+    align-items: start;
+  }
+
+  .home-greeting,
+  .draft-banner,
+  .home-recent {
+    grid-column: 1 / -1;
+  }
+
+  .quick-actions {
+    grid-column: 1;
+  }
+
+  .home-stats {
+    grid-column: 2;
+    grid-template-columns: 1fr 1fr;
+    align-content: start;
+  }
+
+  .detail-shell {
+    width: min(1000px, 92vw);
+    margin: 0 auto;
+    grid-template-columns: 0.8fr 1.2fr;
+    gap: 40px;
+    align-items: start;
+    padding: 40px 0 80px;
   }
 }
 

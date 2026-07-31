@@ -23,6 +23,7 @@ from .models import (
 from .schemas import (
     ColorResponse,
     GarmentCardResponse,
+    GarmentDetailResponse,
     GarmentStatusResponse,
     GarmentUpdateRequest,
     InProgressGarmentResponse,
@@ -473,6 +474,35 @@ def list_garments(
     )
 
 
+@router.get("/garments/{garment_id}/detail", response_model=GarmentDetailResponse)
+def garment_detail(
+    garment_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> GarmentDetailResponse:
+    garment = owned_garment(db, garment_id, user.id)
+    return GarmentDetailResponse(
+        garment_id=garment.id,
+        display_name=garment.display_name or "Unnamed garment",
+        category=(garment.category or GarmentCategory.top).value,
+        subcategory=garment.subcategory,
+        availability=garment.availability.value,
+        planner_enabled=garment.planner_enabled,
+        wear_count=garment.wear_count,
+        last_worn_at=garment.last_worn_at,
+        colors=garment_colors(db, garment.id),
+        pattern=garment.pattern,
+        image_url=presigned_read_url(garment.processed_object_key, settings),
+        original_url=presigned_read_url(garment.original_object_key, settings),
+        formality=garment.formality or 0,
+        warmth=garment.warmth or 0,
+        breathability=garment.breathability or 0,
+        water_resistance=garment.water_resistance or 0,
+        seasons=garment_seasons(db, garment.id),
+    )
+
+
 @router.patch("/garments/{garment_id}", response_model=GarmentCardResponse)
 def update_garment(
     garment_id: uuid.UUID,
@@ -482,10 +512,22 @@ def update_garment(
     settings: Settings = Depends(get_settings),
 ) -> GarmentCardResponse:
     garment = owned_garment(db, garment_id, user.id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    seasons = updates.pop("seasons", None)
+    for field, value in updates.items():
         if field == "availability":
             value = Availability(value)
         setattr(garment, field, value)
+    if seasons is not None:
+        db.execute(delete(GarmentSeason).where(GarmentSeason.garment_id == garment.id))
+        for season, suitability in seasons.items():
+            db.add(
+                GarmentSeason(
+                    garment_id=garment.id,
+                    season=season,
+                    suitability=suitability,
+                )
+            )
     db.commit()
     return garment_card(garment, garment_colors(db, garment.id), settings)
 
